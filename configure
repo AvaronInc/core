@@ -1,0 +1,76 @@
+#!/bin/sh -e
+
+PREFIX=""
+PORT=443
+
+for arg; do
+	case "$arg" in
+	GO=*)             GO="${arg##*=}";;
+	--prefix=*) PREFIX="${arg##*=}"; echo "unimplented: $arg" 1>&2; exit 1;;
+	--port=*) PORT="${arg##*=}";;
+	*) echo "unrecognized option: $arg" 1>&2; exit 1
+	esac
+done
+
+resolve() {
+	for bin in "$@"; do
+		if type "$bin" 2>/dev/null >&2; then
+			echo "$bin"
+			return 0
+		fi
+	done
+	return 1
+}
+
+go_files() {
+	go list -f '{{ $v := printf "%s" .Dir -}}  {{ range .GoFiles }} {{- printf "%s/%s\n" $v . -}} {{ end }}'  ./... |
+		sed "s,^$PWD/,,"
+}
+
+
+if ! [ -r go.mod ] && ! [ -f go.mod ]; then
+	printf "%s: go.mod does is not a readable file. exitting\n" "${0##*/}" >&2
+	exit 1
+elif BIN="$(go list -f '{{.Module.Path}}')"; then
+	: # no-op
+else
+	printf "%s: failed to parse go.mod for binary name. exitting\n" "${0##*/}" >&2
+	exit 1
+fi
+
+if [ -n "$GO" ]; then
+	: # no-op
+elif GO=$(resolve go); then
+	: # no-op
+else
+	printf "%s: failed to find golang binary\n" "${0##*/}" >&2
+	exit 1
+fi
+
+if [ -n "$WIREGUARD" ]; then
+	: # no-op
+elif wireguard=$(resolve wg); then
+	: # no-op
+else
+	printf "%s: failed to find wireguard binary\n" "${0##*/}" >&2
+	exit 1
+fi
+
+# list go file deps
+if ! GO_FILES="$(go_files | tr '\n' ' ')"; then
+	printf "%s: failed to find go files\n" "${0##*/}" >&2
+	exit 1
+fi
+
+cat - "in.mk" > Makefile << EOF
+.POSIX:
+
+BIN=$BIN
+PREFIX=$PREFIX
+
+GO=$GO
+GO_FILES=$GO_FILES
+
+PORT=$PORT
+
+EOF

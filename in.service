@@ -1,0 +1,14 @@
+[Unit]
+Description=Avaron
+After=network-online.target
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=1
+ExecStart=@PREFIX/bin/@BIN
+StandardOutput=journal+console
+StandardError=inherit
+
+[Install]
+WantedBy=multi-user.target
