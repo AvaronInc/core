@@ -3,9 +3,9 @@
 cd ~
 
 # INTERNAL IP for the Avaron interface
-if ! [ -f ip ]; then
-	ip=10.7.4.1
-elif ! read -r ip < ip; then
+if ! [ -f address ]; then
+	address=10.7.4.1
+elif ! read -r address < address; then
 	echo "configuration error: failed to read avaron IP - exitting" 1>&2
 	exit 1
 fi
@@ -21,13 +21,13 @@ fi
 # EXTERNAL port for the Avaron interface
 if ! [ -f port ]; then
 	port=10741
-elif ! read -r port < ip; then
+elif ! read -r port < address; then
 	echo "configuration error: failed to read avaron port number - exitting" 1>&2
 	exit 1
 fi
 
 sudo ip link    add dev avaron type        wireguard
-sudo ip address add dev avaron             "$ip/$mask" 
+sudo ip address add dev avaron             "$address/$mask"
 sudo wg         set     avaron listen-port "$port"     private-key key
 
 (
@@ -40,7 +40,7 @@ sudo wg         set     avaron listen-port "$port"     private-key key
 		fi < "$peer/host"
 
 		if ! read -r port; then
-			port=10731
+			port=58210
 		fi < "$peer/port"
 
 		sudo wg set wg0 peer "$peer" endpoint "$host:$port"
