@@ -5,19 +5,21 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"io"
 	"fmt"
 	nl "github.com/vishvananda/netlink"
+	"io"
+	"io/fs"
 	"net"
-	"strings"
 	"net/http"
 	"os"
-	"sort"
-	"time"
 	"os/exec"
 	"os/user"
-	"io/fs"
 	filepath "path"
+	"sort"
+	"strconv"
+	"strings"
+	"syscall"
+	"time"
 )
 
 // Location represents the geographical location of the branch
@@ -104,7 +106,7 @@ type Branch struct {
 
 func handle(conn net.Conn) {
 	var res = http.Response{
-		Proto: "HTTP/1.1",
+		Proto:      "HTTP/1.1",
 		ProtoMajor: 1,
 		ProtoMinor: 1,
 		StatusCode: http.StatusOK,
@@ -141,7 +143,7 @@ func handle(conn net.Conn) {
 		}
 		fmt.Fprintf(os.Stderr, "pairing with %s\n", conn.RemoteAddr().String())
 		var (
-			buf [45]byte
+			buf    [45]byte
 			public [32]byte
 		)
 
@@ -209,19 +211,21 @@ func startup() error {
 }
 
 var (
-	Home fs.FS
-	PublicSSHKeys []byte
+	Home               fs.FS
+	PublicSSHKeys      []byte
 	PublicWireguardKey []byte
 )
 
-func initialize() error {
+func main() {
 	if len(os.Args) < 1 {
-		return fmt.Errorf("unnamed binary")
+		fmt.Fprintf(os.Stderr, "unnamed binary")
+		os.Exit(1)
 	}
 
 	user, err := user.Current()
 	if err != nil {
-		return fmt.Errorf("fetching username: %+v", err)
+		fmt.Fprintf(os.Stderr, "fetching username: %+v\n", err)
+		os.Exit(1)
 	}
 
 	var name string
@@ -230,15 +234,52 @@ func initialize() error {
 	} else if name = user.Username; name != "" {
 		// ok
 	} else {
-		return fmt.Errorf("usernames empty")
+		fmt.Fprintf(os.Stderr, "usernames empty\n")
+		os.Exit(1)
 	}
 
 	if base := filepath.Base(os.Args[0]); base != name {
-		return fmt.Errorf("username '%s' != program name '%s'", name, base)
+		fmt.Fprintf(os.Stderr, "username '%s' != program name '%s'\n", name, base)
+		os.Exit(1)
 	}
 
 	if err := os.Chdir(user.HomeDir); err != nil {
-		return fmt.Errorf("changing to home directory - %+v", err)
+		fmt.Fprintf(os.Stderr, "changing to home directory - %+v\n", err)
+		os.Exit(1)
+	}
+
+	createPIDFile := func() {
+		buf := fmt.Sprintf("%d\n", os.Getpid())
+		err := os.WriteFile("pid", []byte(buf), 0644)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to create PID file: %+v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	buf, err := os.ReadFile("pid")
+	if err != nil && os.IsNotExist(err) {
+		createPIDFile()
+	} else if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to read PID file: %+v\n", err)
+		os.Exit(1)
+	} else if pid, err := strconv.Atoi(string(bytes.TrimSpace(buf))); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to read PID file: %+v\n", err)
+		os.Exit(1)
+	} else {
+		var e1, e2 error
+		var proc *os.Process
+		proc, e1 = os.FindProcess(pid)
+		if e1 == nil {
+			e2 = proc.Signal(syscall.Signal(0))
+		}
+		if e1 == nil && e2 == nil {
+			// controller mode
+			fmt.Fprintf(os.Stderr, "avaron process exists - TODO\n")
+			os.Exit(1)
+		} else {
+			createPIDFile()
+		}
 	}
 
 	// reading all SSH public keys
@@ -246,7 +287,8 @@ func initialize() error {
 
 	paths, err := fs.Glob(ssh, "*.pub")
 	if err != nil {
-		return fmt.Errorf("failed to find public SSH keys: %+v\n", err)
+		fmt.Fprintf(os.Stderr, "failed to find public SSH keys: %+v\n", err)
+		os.Exit(1)
 	}
 	fmt.Fprintf(os.Stderr, "found %d SSH public keys: %s\n", len(paths), strings.Join(paths, ", "))
 
@@ -260,32 +302,23 @@ func initialize() error {
 	}
 
 	if len(PublicSSHKeys) == 0 {
-		return fmt.Errorf("failed to find/read public SSH key files\n")
+		fmt.Fprintf(os.Stderr, "failed to find/read public SSH key files\n")
+		os.Exit(1)
 	}
 	fmt.Fprintf(os.Stderr, "%s\n", PublicSSHKeys)
 
 	// reading wireguard public key
-	cmd := exec.Command("/bin/sh", "-c", "/bin/wg pubkey < key")
+	cmd := exec.Command("/bin/sh", "-c", "/bin/wg pubkey < wireguard/private")
 	if out, err := cmd.Output(); err != nil {
-		fmt.Println("failed to start wireguard & ", err)
+		fmt.Fprintf(os.Stderr, "failed to start wireguard for public-key derivation: %+v\n", err)
 		os.Exit(1)
 	} else {
 		PublicWireguardKey = out
 	}
 
-	return nil
-}
-
-
-func main() {
-	if err := initialize(); err != nil {
-		fmt.Fprintf(os.Stderr, "initialization failed: %+v\n", err)
-		os.Exit(1)
-	}
-
 	links, err := nl.LinkList()
 	if err != nil {
-		fmt.Println("error getting interfaces:", err)
+		fmt.Fprintf(os.Stderr, "error getting interfaces: %+v\n", err)
 		os.Exit(1)
 	}
 
@@ -296,7 +329,7 @@ func main() {
 
 	routes, err := nl.RouteList(nil, nl.FAMILY_V4)
 	if err != nil {
-		fmt.Println("error getting routes: %+v", err)
+		fmt.Fprintf(os.Stderr, "error getting routes: %+v\n", err)
 		os.Exit(1)
 	}
 
@@ -316,8 +349,8 @@ func main() {
 
 	// load balancer - connection times out quicker the more connections there are
 	const (
-		total = 256
-		timeout = 10*time.Second
+		total   = 256
+		timeout = 10 * time.Second
 	)
 	tokens := make(chan struct{})
 	duration := make(chan time.Duration)
@@ -330,15 +363,15 @@ func main() {
 			// timeout*(total/n)
 			// or
 			// (timeout*total) / (timeout*n)
-			d := (time.Duration(n+1)*timeout)/(time.Duration(total+1))
+			d := (time.Duration(n+1) * timeout) / (time.Duration(total + 1))
 			fmt.Fprintf(os.Stderr, "n: %d\n", n)
 			if n > 0 {
 				select {
-				case tokens<-struct{}{}:
+				case tokens <- struct{}{}:
 					n--
 				case <-tokens:
 					n++
-				case duration<-d:
+				case duration <- d:
 				case <-ctx.Done():
 					return
 				}
@@ -346,7 +379,7 @@ func main() {
 				select {
 				case <-tokens:
 					n++
-				case duration<-d:
+				case duration <- d:
 				case <-ctx.Done():
 					return
 				}
@@ -381,7 +414,7 @@ func main() {
 			handle(conn)
 			conn.Close()
 			select {
-			case tokens<-struct{}{}:
+			case tokens <- struct{}{}:
 				// return token
 			case <-ctx.Done():
 			}
