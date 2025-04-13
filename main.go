@@ -216,6 +216,41 @@ var (
 	PublicWireguardKey []byte
 )
 
+func controller() error {
+	if len(os.Args) <= 1 {
+		return fmt.Errorf("controller invoked with no arguments")
+	}
+
+	switch os.Args[1] {
+	case "pair":
+		if len(os.Args) <= 2 {
+			return fmt.Errorf("not enough arguments")
+		}
+		link := fmt.Sprintf("http://%s/keys/wireguard", os.Args[2])
+		res, err := http.Get(link)
+		if err != nil {
+			return err
+		}
+		defer res.Body.Close()
+
+		if res.StatusCode != http.StatusOK {
+			return fmt.Errorf("%s responded with %s", link, res.Status)
+		}
+
+		public, err := io.ReadAll(res.Body)
+		if err != nil {
+			fmt.Errorf("reading response body: %+v", err)
+			os.Exit(1)
+		}
+
+		fmt.Fprintf(os.Stderr, "got public key: %s\n", string(public))
+	default:
+		return fmt.Errorf("unknown option: %s", os.Args[1])
+	}
+
+	return nil
+}
+
 func main() {
 	if len(os.Args) < 1 {
 		fmt.Fprintf(os.Stderr, "unnamed binary")
@@ -231,7 +266,7 @@ func main() {
 
 	uid, err := strconv.Atoi(user.Uid)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to parse %s's UID '%s' - %+v\n", base, uid, err)
+		fmt.Fprintf(os.Stderr, "failed to parse %s's UID '%s' - %+v\n", base, user.Uid, err)
 		os.Exit(1)
 	}
 
@@ -273,8 +308,13 @@ func main() {
 		}
 		if e1 == nil && e2 == nil {
 			// controller mode
-			fmt.Fprintf(os.Stderr, "avaron process exists - TODO\n")
-			os.Exit(1)
+			fmt.Fprintf(os.Stderr, "%s process already exists with pid %d - invoking controller\n", base, pid)
+			err := controller()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "%+v\n", err)
+				os.Exit(1)
+			}
+			os.Exit(0)
 		} else {
 			createPIDFile()
 		}
