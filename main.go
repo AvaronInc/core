@@ -202,14 +202,6 @@ func sortRoutes(routes []nl.Route) {
 	})
 }
 
-func startup() error {
-	cmd := exec.Command("prog")
-	if err := cmd.Run(); err != nil {
-		return err
-	}
-	return nil
-}
-
 var (
 	Home               fs.FS
 	PublicSSHKeys      []byte
@@ -222,33 +214,86 @@ func controller() error {
 	}
 
 	switch os.Args[1] {
+	case "address":
+		if len(os.Args) <= 2 {
+			return fmt.Errorf("not enough arguments")
+		}
+		ip, network, err := net.ParseCIDR(os.Args[2])
+		if err != nil {
+			return fmt.Errorf("error parsing address: %+v", err)
+		}
+
+		i := strings.Index(network.String(), "/")
+		if i == -1 {
+			return fmt.Errorf("/ not found in generated IP address string")
+		}
+
+		address := fmt.Sprintf("%s\n", ip.String())
+		mask := fmt.Sprintf("%s\n", network.String()[i+1:])
+
+		err = os.WriteFile("address", []byte(address), 0644)
+		if err != nil {
+			return fmt.Errorf("failed writing address file: %+v", err)
+		}
+		err = os.WriteFile("mask", []byte(mask), 0644)
+		if err != nil {
+			return fmt.Errorf("failed writing mask file: %+v", err)
+		}
 	case "pair":
 		if len(os.Args) <= 2 {
 			return fmt.Errorf("not enough arguments")
 		}
 		link := fmt.Sprintf("http://%s/keys/wireguard", os.Args[2])
-		res, err := http.Get(link)
+		r1, err := http.Get(link)
 		if err != nil {
 			return err
 		}
-		defer res.Body.Close()
+		defer r1.Body.Close()
 
-		if res.StatusCode != http.StatusOK {
-			return fmt.Errorf("%s responded with %s", link, res.Status)
+		if r1.StatusCode != http.StatusOK {
+			return fmt.Errorf("%s responded with %s", link, r1.Status)
 		}
 
-		public, err := io.ReadAll(res.Body)
+		wireguard, err := io.ReadAll(r1.Body)
 		if err != nil {
-			fmt.Errorf("reading response body: %+v", err)
-			os.Exit(1)
+			return fmt.Errorf("reading response body: %+v", err)
 		}
 
-		fmt.Fprintf(os.Stderr, "got public key: %s\n", string(public))
+		link = fmt.Sprintf("http://%s/keys/ssh", os.Args[2])
+		r2, err := http.Get(link)
+		if err != nil {
+			return err
+		}
+		defer r2.Body.Close()
+
+		if r2.StatusCode != http.StatusOK {
+			return fmt.Errorf("%s responded with %s", link, r2.Status)
+		}
+
+		ssh, err := io.ReadAll(r2.Body)
+		if err != nil {
+			return fmt.Errorf("reading response body: %+v", err)
+		}
+
+		fmt.Fprintf(os.Stderr, "got public keys - wg: %s, ssh: %s\n", string(wireguard), string(ssh))
+		err = initVPN()
+		if err != nil {
+			return err
+		}
 	default:
 		return fmt.Errorf("unknown option: %s", os.Args[1])
 	}
 
 	return nil
+}
+
+func initVPN() error {
+	cmd := exec.Command(".local/bin/init.sh")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		err = fmt.Errorf("error from init.sh: %+v - output: %s", err, string(output))
+	}
+	return err
 }
 
 func main() {
