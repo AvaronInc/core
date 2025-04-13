@@ -30,6 +30,8 @@ install: build
 	su $(BIN) sh -c 'cd ~/wireguard && touch private && chmod 600 private && chown $(BIN) private'
 	su $(BIN) sh -c 'cd ~/wireguard && wg genkey | tee private | wg pubkey > public'
 	su $(BIN) sh -c 'cd ~/wireguard && chmod 400 private'
+	cp bin/init.sh /tmp/init.sh
+	su $(BIN) sh -c 'cd && mkdir -p .local/bin && cp /tmp/init.sh .local/bin/ && chmod 555 .local/bin/init.sh'
 
 uninstall:
 	rm -f /etc/$(BIN)/key \
