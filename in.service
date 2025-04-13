@@ -7,6 +7,7 @@ Type=simple
 Restart=always
 RestartSec=1
 ExecStart=@PREFIX/bin/@BIN
+User=@BIN
 StandardOutput=journal+console
 StandardError=inherit
 

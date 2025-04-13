@@ -10,28 +10,31 @@ $(BIN).service: in.service Makefile
 	sed 's,@PREFIX,$(PREFIX),g; s,@BIN,$(BIN),g' in.service > $(BIN).service
 
 install: build
+	if id $(BIN) >/dev/null 1>&2; then \
+		echo "$(BIN) user already exists" 1>&2; \
+		exit 1; \
+	fi
+
 	mkdir -p $(PREFIX)/lib/systemd/system/
 	cp $(BIN) $(PREFIX)/bin/$(BIN)
 	cp bin/* $(PREFIX)/bin/
 	mkdir -p $(PREFIX)/lib/systemd/system/
 	cp $(BIN).service $(PREFIX)/lib/systemd/system/$(BIN).service
 
-	mkdir -p $(PREFIX)/var/lib/$(BIN)/ $(PREFIX)/var/lib/$(BIN)/peers
-
-	if [ ! -d "/etc/$(BIN)" ]; then \
-		mkdir -p /etc/$(BIN) && \
-		chown root:root /etc/$(BIN) && \
-		chmod 700 /etc/$(BIN) && \
-		wg genkey | tee /etc/$(BIN)/key | wg pubkey > $(PREFIX)/var/lib/$(BIN)/key; \
-	fi
+	useradd -m $(BIN) -s /bin/sh -r
+	su $(BIN) sh -c 'cd && yes "" | ssh-keygen && mkdir -p peers wireguard'
+	su $(BIN) sh -c 'cd ~/wireguard && touch private && chmod 600 private && chown $(BIN) private'
+	su $(BIN) sh -c 'cd ~/wireguard && wg genkey | tee private | wg pubkey > public'
+	su $(BIN) sh -c 'cd ~/wireguard && chmod 400 private'
 
 uninstall:
-	rm -rf /etc/$(BIN)/key \
+	rm -f /etc/$(BIN)/key \
 		$(PREFIX)/lib/systemd/$(BIN).service \
-		$(PREFIX)/var/lib/$(BIN)/peers \
-		$(PREFIX)/var/lib/$(BIN)/key
-	rmdir /etc/$(BIN)
-	rmdir $(PREFIX)/var/lib/$(BIN)
+		$(PREFIX)/var/lib/$(BIN)/key ||:
+	rm -rf $(PREFIX)/var/lib/$(BIN)/peers ||:
+	rmdir /etc/$(BIN) ||:
+	rmdir $(PREFIX)/var/lib/$(BIN) ||:
+	userdel -rf $(BIN)
 
 restart:
 	systemctl daemon-reload
