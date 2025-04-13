@@ -222,24 +222,22 @@ func main() {
 		os.Exit(1)
 	}
 
-	user, err := user.Current()
+	base := filepath.Base(os.Args[0])
+	user, err := user.Lookup(base)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "fetching username: %+v\n", err)
+		fmt.Fprintf(os.Stderr, "failed to find user '%s' - %+v\n", base, err)
 		os.Exit(1)
 	}
 
-	var name string
-	if name = user.Name; name != "" {
-		// ok
-	} else if name = user.Username; name != "" {
-		// ok
-	} else {
-		fmt.Fprintf(os.Stderr, "usernames empty\n")
+	uid, err := strconv.Atoi(user.Uid)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to parse %s's UID '%s' - %+v\n", base, uid, err)
 		os.Exit(1)
 	}
 
-	if base := filepath.Base(os.Args[0]); base != name {
-		fmt.Fprintf(os.Stderr, "username '%s' != program name '%s'\n", name, base)
+	puid := os.Getuid()
+	if puid != 0 && puid != uid {
+		fmt.Fprintf(os.Stderr, "%s was invoked by UID %d, however, the %s user has UID %d\n", os.Args[0], puid, filepath.Base(os.Args[0]), uid)
 		os.Exit(1)
 	}
 
