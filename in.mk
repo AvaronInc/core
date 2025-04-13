@@ -22,6 +22,10 @@ install: build
 	cp $(BIN).service $(PREFIX)/lib/systemd/system/$(BIN).service
 
 	useradd -m $(BIN) -s /bin/sh -r
+
+	printf "%s ALL=(ALL) !ALL\n"                       "$(BIN)"  > "/etc/sudoers.d/$(BIN)"
+	printf "%s ALL=(ALL) NOPASSWD: /bin/ip, /bin/wg\n" "$(BIN)" >> "/etc/sudoers.d/$(BIN)"
+
 	su $(BIN) sh -c 'cd && yes "" | ssh-keygen && mkdir -p peers wireguard'
 	su $(BIN) sh -c 'cd ~/wireguard && touch private && chmod 600 private && chown $(BIN) private'
 	su $(BIN) sh -c 'cd ~/wireguard && wg genkey | tee private | wg pubkey > public'
