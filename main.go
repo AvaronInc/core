@@ -3,14 +3,21 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
+	"encoding/base64"
+	"io"
 	"fmt"
 	nl "github.com/vishvananda/netlink"
 	"net"
+	"strings"
 	"net/http"
 	"os"
 	"sort"
 	"time"
 	"os/exec"
+	"os/user"
+	"io/fs"
+	filepath "path"
 )
 
 // Location represents the geographical location of the branch
@@ -96,19 +103,84 @@ type Branch struct {
 */
 
 func handle(conn net.Conn) {
+	var res = http.Response{
+		Proto: "HTTP/1.1",
+		ProtoMajor: 1,
+		ProtoMinor: 1,
+		StatusCode: http.StatusOK,
+	}
+
 	reader := bufio.NewReader(conn)
 	req, err := http.ReadRequest(reader)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error reading request: %+v\n", err)
-		return
+		goto failure
+	} else {
+		res.Request = req
 	}
 
-	fmt.Fprintf(os.Stderr, "Method: %s\n", req.Method)
-	fmt.Fprintf(os.Stderr, "URL: %s\n", req.URL)
-	fmt.Fprintf(os.Stderr, "Headers: %v\n", req.Header)
+	fmt.Fprintf(os.Stderr, "%s: %s\n", req.Method, req.URL.Path)
 
-	response := "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nHello, World!\r\n"
-	_, err = conn.Write([]byte(response))
+	switch req.URL.Path {
+	case "/keys/ssh":
+		if req.Method != "GET" {
+			res.StatusCode = http.StatusMethodNotAllowed
+			break
+		}
+		res.Body = io.NopCloser(bytes.NewReader(PublicSSHKeys[:]))
+	case "/keys/wireguard":
+		if req.Method != "GET" {
+			res.StatusCode = http.StatusMethodNotAllowed
+			break
+		}
+		res.Body = io.NopCloser(bytes.NewReader(PublicWireguardKey[:]))
+	case "/pair":
+		if req.Method != "POST" {
+			res.StatusCode = http.StatusMethodNotAllowed
+			break
+		}
+		fmt.Fprintf(os.Stderr, "pairing with %s\n", conn.RemoteAddr().String())
+		var (
+			buf [45]byte
+			public [32]byte
+		)
+
+		// check content-length
+		if a, b := req.ContentLength, int64(len(buf)); a < b || a > b+1 {
+			fmt.Fprintf(os.Stderr, "Request Content-Length (%d) != %d +/- 1/0\n", a, b)
+			res.StatusCode = http.StatusBadRequest
+			break
+		}
+
+		// read body
+		n, err := req.Body.Read(buf[:])
+		if err != nil && err != io.EOF {
+			fmt.Fprintf(os.Stderr, "failed to read body: %+v\n", err)
+			res.StatusCode = http.StatusBadRequest
+			break
+		}
+
+		// decode
+		n, err = base64.StdEncoding.Decode(public[:], buf[:])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to deocde body: %+v\n", err)
+			res.StatusCode = http.StatusBadRequest
+			break
+		}
+
+		// check decoded body length
+		if n != len(public) {
+			fmt.Fprintf(os.Stderr, "Decoded buffer len (%d) != %d\n", n, len(public))
+			res.StatusCode = http.StatusBadRequest
+		}
+
+		fmt.Fprintf(os.Stderr, "got buffer! %+v\n", public)
+	}
+
+failure:
+	res.Status = http.StatusText(res.StatusCode)
+
+	err = res.Write(conn)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error writing request: %+v", err)
 		return
@@ -136,7 +208,81 @@ func startup() error {
 	return nil
 }
 
+var (
+	Home fs.FS
+	PublicSSHKeys []byte
+	PublicWireguardKey []byte
+)
+
+func initialize() error {
+	if len(os.Args) < 1 {
+		return fmt.Errorf("unnamed binary")
+	}
+
+	user, err := user.Current()
+	if err != nil {
+		return fmt.Errorf("fetching username: %+v", err)
+	}
+
+	var name string
+	if name = user.Name; name != "" {
+		// ok
+	} else if name = user.Username; name != "" {
+		// ok
+	} else {
+		return fmt.Errorf("usernames empty")
+	}
+
+	if base := filepath.Base(os.Args[0]); base != name {
+		return fmt.Errorf("username '%s' != program name '%s'", name, base)
+	}
+
+	if err := os.Chdir(user.HomeDir); err != nil {
+		return fmt.Errorf("changing to home directory - %+v", err)
+	}
+
+	// reading all SSH public keys
+	ssh := os.DirFS(".ssh")
+
+	paths, err := fs.Glob(ssh, "*.pub")
+	if err != nil {
+		return fmt.Errorf("failed to find public SSH keys: %+v\n", err)
+	}
+	fmt.Fprintf(os.Stderr, "found %d SSH public keys: %s\n", len(paths), strings.Join(paths, ", "))
+
+	for _, path := range paths {
+		pub, err := fs.ReadFile(ssh, path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error reading %s: %+v\n", path, err)
+			continue
+		}
+		PublicSSHKeys = append(PublicSSHKeys, pub...)
+	}
+
+	if len(PublicSSHKeys) == 0 {
+		return fmt.Errorf("failed to find/read public SSH key files\n")
+	}
+	fmt.Fprintf(os.Stderr, "%s\n", PublicSSHKeys)
+
+	// reading wireguard public key
+	cmd := exec.Command("/bin/sh", "-c", "/bin/wg pubkey < key")
+	if out, err := cmd.Output(); err != nil {
+		fmt.Println("failed to start wireguard & ", err)
+		os.Exit(1)
+	} else {
+		PublicWireguardKey = out
+	}
+
+	return nil
+}
+
+
 func main() {
+	if err := initialize(); err != nil {
+		fmt.Fprintf(os.Stderr, "initialization failed: %+v\n", err)
+		os.Exit(1)
+	}
+
 	links, err := nl.LinkList()
 	if err != nil {
 		fmt.Println("error getting interfaces:", err)
@@ -168,17 +314,46 @@ func main() {
 
 	fmt.Fprintf(os.Stderr, "listening on %s\n", listener.Addr().String())
 
-	conns := make(chan net.Conn)
+	// load balancer - connection times out quicker the more connections there are
+	const (
+		total = 256
+		timeout = 10*time.Second
+	)
+	tokens := make(chan struct{})
+	duration := make(chan time.Duration)
 
-	for i := 0; i < 8; i++ {
-		go func() {
-			for conn := range conns {
-				conn.SetDeadline(time.Now().Add(time.Second * 10))
-				handle(conn)
-				conn.Close()
+	ctx := context.Background()
+
+	go func() {
+		n := total
+		for {
+			// timeout*(total/n)
+			// or
+			// (timeout*total) / (timeout*n)
+			d := (time.Duration(n+1)*timeout)/(time.Duration(total+1))
+			fmt.Fprintf(os.Stderr, "n: %d\n", n)
+			if n > 0 {
+				select {
+				case tokens<-struct{}{}:
+					n--
+				case <-tokens:
+					n++
+				case duration<-d:
+				case <-ctx.Done():
+					return
+				}
+			} else {
+				select {
+				case <-tokens:
+					n++
+				case duration<-d:
+				case <-ctx.Done():
+					return
+				}
 			}
-		}()
-	}
+
+		}
+	}()
 
 	for {
 		conn, err := listener.Accept()
@@ -186,6 +361,30 @@ func main() {
 			fmt.Fprintf(os.Stderr, "error accepting connection: %+v\n", err)
 			continue
 		}
-		conns <- conn
+
+		dur, ok := <-duration
+		if !ok {
+			break
+		}
+		fmt.Fprintf(os.Stderr, "dur: %20s\n", dur)
+
+		t := time.Now().Add(dur)
+		conn.SetDeadline(t)
+		deadline, _ := context.WithDeadline(ctx, t)
+		go func() {
+			select {
+			case <-tokens:
+				// borrow token
+			case <-deadline.Done():
+				return
+			}
+			handle(conn)
+			conn.Close()
+			select {
+			case tokens<-struct{}{}:
+				// return token
+			case <-ctx.Done():
+			}
+		}()
 	}
 }
