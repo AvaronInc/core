@@ -52,6 +52,6 @@ sudo wg         set     avaron listen-port "$port"     private-key wireguard/pri
 			exit 1
 		fi
 
-		sudo wg set avaron peer "$peer" endpoint "$host:$port" allowed-ips 0.0.0.0/0
+		sudo wg set avaron peer "$(echo "$peer" | tr '-' '/')" endpoint "$host:$port" allowed-ips 0.0.0.0/0
 	done
 )

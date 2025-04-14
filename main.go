@@ -276,9 +276,8 @@ func controller() error {
 			return fmt.Errorf("reading response body: %+v", err)
 		}
 
-
 		wireguard = bytes.TrimSpace(wireguard)
-		dir := fmt.Sprintf("peers/%s", strings.Replace(string(wireguard), "/", "\\/", -1))
+		dir := fmt.Sprintf("peers/%s", strings.Replace(string(wireguard), "/", "-", -1))
 		err = os.Mkdir(dir, 0755)
 		if err != nil {
 			return fmt.Errorf("reading response body: %+v", err)
