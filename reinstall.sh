@@ -8,5 +8,6 @@ elif [ "$id" = "" ] || [ "$id" -eq 0 ]; then
 fi
 
 make &&
+	(sudo killall avaron||:) &&
 	(sudo make uninstall||:) &&
 	sudo make install
