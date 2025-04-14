@@ -20,6 +20,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"net/url"
 )
 
 // Location represents the geographical location of the branch
@@ -136,7 +137,7 @@ func handle(conn net.Conn) {
 			break
 		}
 		res.Body = io.NopCloser(bytes.NewReader(PublicWireguardKey[:]))
-	case "/pair":
+	case "/peer":
 		if req.Method != "POST" {
 			res.StatusCode = http.StatusMethodNotAllowed
 			break
@@ -239,7 +240,7 @@ func controller() error {
 		if err != nil {
 			return fmt.Errorf("failed writing mask file: %+v", err)
 		}
-	case "pair":
+	case "peer":
 		if len(os.Args) <= 2 {
 			return fmt.Errorf("not enough arguments")
 		}
@@ -275,16 +276,24 @@ func controller() error {
 			return fmt.Errorf("reading response body: %+v", err)
 		}
 
-		dir := fmt.Sprintf("peers/%s", string(wireguard))
+
+		wireguard = bytes.TrimSpace(wireguard)
+		dir := fmt.Sprintf("peers/%s", strings.Replace(string(wireguard), "/", "\\/", -1))
 		err = os.Mkdir(dir, 0755)
 		if err != nil {
 			return fmt.Errorf("reading response body: %+v", err)
 		}
 
 		// TODO: rm -rf on failure
-		err = os.WriteFile(fmt.Sprintf("%s/wireguard", dir), wireguard, 0555)
+		url, _ := url.Parse(link)
+		host := url.Host
+		if i := strings.Index(host, ":"); i != 0 {
+			host = host[:i]
+		}
+		host = fmt.Sprintf("%s\n", host)
+		err = os.WriteFile(fmt.Sprintf("%s/host", dir), []byte(host), 0555)
 		if err != nil {
-			return fmt.Errorf("failed writing wireguard file: %+v", err)
+			return fmt.Errorf("failed writing host '%s' to file: %+v", url.Host, err)
 		}
 
 		err = os.WriteFile(fmt.Sprintf("%s/ssh", dir), ssh, 0555)
