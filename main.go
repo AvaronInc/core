@@ -275,7 +275,7 @@ func controller() error {
 			return fmt.Errorf("reading response body: %+v", err)
 		}
 
-		dir := fmt.Sprintf("peers/%s/", string(wireguard))
+		dir := fmt.Sprintf("peers/%s", string(wireguard))
 		err = os.Mkdir(dir, 0755)
 		if err != nil {
 			return fmt.Errorf("reading response body: %+v", err)
@@ -414,6 +414,12 @@ func main() {
 		os.Exit(1)
 	} else {
 		PublicWireguardKey = out
+	}
+
+	err = exec.Command("/bin/sh", "-c", "ip link del dev avaron||:").Run()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error removing prior interface: %+v\n", err)
+		os.Exit(1)
 	}
 
 	links, err := nl.LinkList()
