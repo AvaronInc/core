@@ -275,6 +275,23 @@ func controller() error {
 			return fmt.Errorf("reading response body: %+v", err)
 		}
 
+		dir := fmt.Sprintf("peers/%s/", string(wireguard))
+		err = os.Mkdir(dir, 0755)
+		if err != nil {
+			return fmt.Errorf("reading response body: %+v", err)
+		}
+
+		// TODO: rm -rf on failure
+		err = os.WriteFile(fmt.Sprintf("%s/wireguard", dir), wireguard, 0555)
+		if err != nil {
+			return fmt.Errorf("failed writing wireguard file: %+v", err)
+		}
+
+		err = os.WriteFile(fmt.Sprintf("%s/ssh", dir), ssh, 0555)
+		if err != nil {
+			return fmt.Errorf("failed writing ssh file: %+v", err)
+		}
+
 		fmt.Fprintf(os.Stderr, "got public keys - wg: %s, ssh: %s\n", string(wireguard), string(ssh))
 		err = initVPN()
 		if err != nil {
