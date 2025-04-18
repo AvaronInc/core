@@ -20,7 +20,7 @@ fi
 
 # EXTERNAL port for the Avaron interface
 if ! [ -f port ]; then
-	port=52810
+	port=51820
 elif ! read -r port < address; then
 	echo "configuration error: failed to read avaron port number - exitting" 1>&2
 	exit 1
@@ -32,8 +32,10 @@ fi | awk '($1 == "inet" || $1 == "inet6") { print $2 }' | while read -r addr; do
 	sudo ip addr del "$addr" dev avaron
 done
 
-sudo ip address add dev avaron             "$address/$mask"
-sudo wg         set     avaron listen-port "$port"     private-key wireguard/private
+sudo ip address add     dev avaron             "$address/$mask"
+sudo wg         set         avaron listen-port "$port"     private-key wireguard/private
+sudo ip link    set up  dev avaron
+sudo ip route add "$(avaron netmask "$address/$mask")" dev avaron src "$address"||:
 
 (
 	cd peers
@@ -46,13 +48,12 @@ sudo wg         set     avaron listen-port "$port"     private-key wireguard/pri
 
 		# INTERNAL NETMASK for the Avaron interface
 		if ! [ -f "$peer/port" ]; then
-			port=58210
+			port=51820
 		elif ! read -r  < "$peer/port"; then
 			echo "configuration error: failed to read port for $peer" 1>&2
 			exit 1
 		fi
 
 		sudo wg set avaron peer "$(echo "$peer" | tr '-' '/')" endpoint "$host:$port" allowed-ips 0.0.0.0/0
-		sudo ip route add "$(avaron netmask "$address/$mask")" dev avaron
 	done
 )
