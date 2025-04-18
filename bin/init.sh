@@ -53,6 +53,6 @@ sudo wg         set     avaron listen-port "$port"     private-key wireguard/pri
 		fi
 
 		sudo wg set avaron peer "$(echo "$peer" | tr '-' '/')" endpoint "$host:$port" allowed-ips 0.0.0.0/0
-		sudo ip route add "$address/mask"
+		sudo ip route add "$(avaron netmask "$address/$mask")" dev avaron
 	done
 )

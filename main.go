@@ -450,6 +450,21 @@ func main() {
 		os.Exit(1)
 	}
 
+	// portability hack
+	if len(os.Args) > 1 && os.Args[1] == "netmask" {
+		if len(os.Args) <= 2 {
+			fmt.Fprintf(os.Stderr, "netmask requires CIDR address\n")
+			os.Exit(1)
+		}
+		_, net, err := net.ParseCIDR(os.Args[2])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to parse CIDR: %+v\n", err)
+			os.Exit(1)
+		}
+		fmt.Fprintf(os.Stdout, "%s\n", net.String())
+		os.Exit(1)
+	}
+
 	base := filepath.Base(os.Args[0])
 	user, err := user.Lookup(base)
 	if err != nil {
@@ -485,6 +500,10 @@ func main() {
 
 	buf, err := os.ReadFile("pid")
 	if err != nil && os.IsNotExist(err) {
+		if len(os.Args) > 1 {
+			fmt.Fprintf(os.Stderr, "attempted to invoking controller without existing process\n")
+			os.Exit(1)
+		}
 		createPIDFile()
 	} else if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to read PID file: %+v\n", err)
@@ -501,7 +520,6 @@ func main() {
 		}
 		if e1 == nil && e2 == nil {
 			// controller mode
-			fmt.Fprintf(os.Stderr, "%s process already exists with pid %d - invoking controller\n", base, pid)
 			err := controller()
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "%+v\n", err)
