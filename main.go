@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	nl "github.com/vishvananda/netlink"
 	"io"
@@ -21,6 +22,7 @@ import (
 	"syscall"
 	"time"
 	"net/url"
+	network "avaron/net/linux"
 )
 
 // Location represents the geographical location of the branch
@@ -32,8 +34,8 @@ type Location struct {
 
 // Bandwidth represents the bandwidth details for a connection
 type Bandwidth struct {
-	Download int `json:"download"`
-	Upload   int `json:"upload"`
+	Download int64 `json:"download"`
+	Upload   int64 `json:"upload"`
 }
 
 // Connection represents a network connection
@@ -43,6 +45,28 @@ type Connection struct {
 	Status    string    `json:"status"`
 	Uptime    int64     `json:"uptime"`
 	Bandwidth Bandwidth `json:"bandwidth"`
+}
+
+type Linker interface {
+	ID() string
+	Type() string
+	Status() string
+	Uptime() int64
+	Bandwidth() (int64, int64)
+}
+
+func AsConnection(l Linker) Connection {
+	u, d := l.Bandwidth()
+	return Connection{
+		ID: l.ID(),
+		Type: l.Type(),
+		Status: l.Status(),
+		Uptime: l.Uptime(),
+		Bandwidth: Bandwidth{
+			Upload: u,
+			Download: d,
+		},
+	}
 }
 
 // Metrics represents various metrics related to the branch
@@ -63,6 +87,39 @@ type Branch struct {
 	IPAddress           string     `json:"ipAddress"`
 	NetworkStatus       string     `json:"networkStatus"`
 	Metrics             Metrics    `json:"metrics"`
+}
+
+func Analyze(links map[string]*network.Interface, metrics []network.TCPMetric) Metrics {
+	total := Metrics{
+		ActiveConnections: len(metrics),
+	}
+	for _, m := range metrics {
+		total.Latency += m.RoundTripTime
+		total.Jitter += m.RoundTripTimeVariance
+	}
+	total.Latency /= float64(len(metrics))
+	total.Jitter /=  float64(len(metrics))
+
+	var sent, lost uint64
+	for _, i := range links {
+		sent += i.Stats64.Rx.Packets
+		sent += i.Stats64.Tx.Packets
+
+		lost += i.Stats64.Rx.Errors
+		lost += i.Stats64.Tx.Errors
+
+		lost += i.Stats64.Rx.Dropped
+		lost += i.Stats64.Tx.Dropped
+
+		lost += i.Stats64.Rx.OverErrors
+		lost += i.Stats64.Tx.OverErrors
+	}
+	total.PacketLoss = float64(lost) / float64(sent)
+	return total
+}
+
+type IPer interface {
+	IP() net.IP
 }
 
 /*
@@ -178,9 +235,75 @@ func handle(conn net.Conn) {
 		}
 
 		fmt.Fprintf(os.Stderr, "got buffer! %+v\n", public)
+	case "/sdwan":
+		fmt.Fprintf(os.Stderr, "SDWAN\n")
+		if req.Method != "GET" {
+			res.StatusCode = http.StatusMethodNotAllowed
+			break
+		}
+
+		hostname, err := os.Hostname()
+		if err != nil {
+			res.StatusCode = http.StatusInternalServerError
+			err = fmt.Errorf("failed to query OS hostname: %+v", err)
+			fmt.Fprintf(os.Stderr, "error processing request: %+v", err)
+			break
+		}
+
+		links, metrics, err := network.List(context.Background())
+		if err != nil {
+			res.StatusCode = http.StatusInternalServerError
+			err = fmt.Errorf("failed to query network links: %+v", err)
+			fmt.Fprintf(os.Stderr, "error processing request: %+v", err)
+			break
+		}
+
+		avaron, ok := links["avaron"]
+		if !ok {
+			res.StatusCode = http.StatusInternalServerError
+			err = fmt.Errorf("failed to find avaron NIC")
+			fmt.Fprintf(os.Stderr, "error processing request: %+v", err)
+			break
+		}
+		var primary Connection = AsConnection(avaron)
+
+		branch := Branch{
+			ID: string(PublicWireguardKey),
+			Name: hostname,
+			//Location:
+			PrimaryConnection: primary,
+			//FailoverConnection1:
+			NetworkStatus: avaron.Status(),
+			Metrics: Analyze(links, metrics),
+		}
+
+		buf, err := json.Marshal(branch)
+		if !ok {
+			res.StatusCode = http.StatusInternalServerError
+			err = fmt.Errorf("failed to marshal: %+v", err)
+			break
+		}
+		fmt.Fprintf(os.Stderr, "writing: %s\n", string(buf))
+		res.Body = io.NopCloser(bytes.NewReader(buf))
+		/*
+		type Branch struct {
+			ID                  string     `json:"id"`
+			Name                string     `json:"name"`
+			Location            Location   `json:"location"`
+			PrimaryConnection   Connection `json:"primaryConnection"`
+			FailoverConnection1 Connection `json:"failoverConnection1"`
+			IPAddress           string     `json:"ipAddress"`
+			NetworkStatus       string     `json:"networkStatus"`
+			Metrics             Metrics    `json:"metrics"`
+		}
+		*/
 	}
 
 failure:
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error processing request: %+v", err)
+		return
+	}
 	res.Status = http.StatusText(res.StatusCode)
 
 	err = res.Write(conn)
