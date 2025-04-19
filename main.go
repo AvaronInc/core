@@ -1,17 +1,18 @@
 package main
 
 import (
+	network "avaron/net/linux"
 	"bufio"
 	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	nl "github.com/vishvananda/netlink"
 	"io"
 	"io/fs"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/user"
@@ -21,8 +22,6 @@ import (
 	"strings"
 	"syscall"
 	"time"
-	"net/url"
-	network "avaron/net/linux"
 )
 
 // Location represents the geographical location of the branch
@@ -51,19 +50,17 @@ type Linker interface {
 	ID() string
 	Type() string
 	Status() string
-	Uptime() int64
 	Bandwidth() (int64, int64)
 }
 
 func AsConnection(l Linker) Connection {
 	u, d := l.Bandwidth()
 	return Connection{
-		ID: l.ID(),
-		Type: l.Type(),
+		ID:     l.ID(),
+		Type:   l.Type(),
 		Status: l.Status(),
-		Uptime: l.Uptime(),
 		Bandwidth: Bandwidth{
-			Upload: u,
+			Upload:   u,
 			Download: d,
 		},
 	}
@@ -89,18 +86,13 @@ type Branch struct {
 	Metrics             Metrics    `json:"metrics"`
 }
 
-func Analyze(links map[string]*network.Interface, metrics []network.TCPMetric) Metrics {
-	total := Metrics{
+func Analyze(links map[string]*network.Interface, metrics []network.TCPMetric) (total Metrics, oldest map[string]float64) {
+	total = Metrics{
 		ActiveConnections: len(metrics),
 	}
-	for _, m := range metrics {
-		total.Latency += m.RoundTripTime
-		total.Jitter += m.RoundTripTimeVariance
-	}
-	total.Latency /= float64(len(metrics))
-	total.Jitter /=  float64(len(metrics))
-
 	var sent, lost uint64
+	oldest = make(map[string]float64)
+	addresses := make(map[string]*network.Interface)
 	for _, i := range links {
 		sent += i.Stats64.Rx.Packets
 		sent += i.Stats64.Tx.Packets
@@ -113,9 +105,29 @@ func Analyze(links map[string]*network.Interface, metrics []network.TCPMetric) M
 
 		lost += i.Stats64.Rx.OverErrors
 		lost += i.Stats64.Tx.OverErrors
+		for _, a := range i.AddrInfo {
+			addresses[a.Local] = i
+		}
 	}
+	for _, m := range metrics {
+		total.Latency += m.RoundTripTime
+		total.Jitter += m.RoundTripTimeVariance
+		link, ok := addresses[m.Source.String()]
+		if !ok {
+			fmt.Fprintf(os.Stderr, "warning - failed to find link by address: %s\n", m.Source.String())
+			continue
+		}
+		if m.Age > oldest[link.IfName] {
+			oldest[link.IfName] = m.Age
+		}
+	}
+	fmt.Println("abc", oldest)
+	fmt.Println("abc", addresses)
+	total.Latency /= float64(len(metrics))
+	total.Jitter /= float64(len(metrics))
+
 	total.PacketLoss = float64(lost) / float64(sent)
-	return total
+	return
 }
 
 type IPer interface {
@@ -235,7 +247,7 @@ func handle(conn net.Conn) {
 		}
 
 		fmt.Fprintf(os.Stderr, "got buffer! %+v\n", public)
-	case "/sdwan":
+	case "/self":
 		fmt.Fprintf(os.Stderr, "SDWAN\n")
 		if req.Method != "GET" {
 			res.StatusCode = http.StatusMethodNotAllowed
@@ -250,7 +262,7 @@ func handle(conn net.Conn) {
 			break
 		}
 
-		links, metrics, err := network.List(context.Background())
+		links, err := network.List(context.Background())
 		if err != nil {
 			res.StatusCode = http.StatusInternalServerError
 			err = fmt.Errorf("failed to query network links: %+v", err)
@@ -258,45 +270,74 @@ func handle(conn net.Conn) {
 			break
 		}
 
-		avaron, ok := links["avaron"]
-		if !ok {
+		routes, err := network.Routes(context.Background())
+		if err != nil {
 			res.StatusCode = http.StatusInternalServerError
-			err = fmt.Errorf("failed to find avaron NIC")
+			err = fmt.Errorf("failed to query routes: %+v", err)
 			fmt.Fprintf(os.Stderr, "error processing request: %+v", err)
 			break
 		}
-		var primary Connection = AsConnection(avaron)
 
+		sort.Sort(network.RouteMask(routes))
+		var connections []*network.Interface
+		{
+			m := make(map[string]struct{})
+			for _, r := range routes {
+				_, ok := m[r.Device]
+				if ok {
+					continue
+				}
+				link, ok := links[r.Device]
+				if !ok {
+					fmt.Fprintf(os.Stderr, "warning - failed to find link %s given device name from routing table", r.Device)
+					continue
+				}
+				m[r.Device] = struct{}{}
+				connections = append(connections, link)
+			}
+		}
+
+		tcpmetrics, err := network.Metrics(context.Background())
+		if err != nil {
+			res.StatusCode = http.StatusInternalServerError
+			err = fmt.Errorf("failed to query network metrics: %+v", err)
+			fmt.Fprintf(os.Stderr, "error processing request: %+v", err)
+			break
+		}
+
+		metrics, ages := Analyze(links, tcpmetrics)
 		branch := Branch{
-			ID: string(PublicWireguardKey),
-			Name: hostname,
-			//Location:
-			PrimaryConnection: primary,
-			//FailoverConnection1:
-			NetworkStatus: avaron.Status(),
-			Metrics: Analyze(links, metrics),
+			ID:            string(PublicWireguardKey),
+			Name:          hostname,
+			NetworkStatus: "DOWN",
+			Metrics:       metrics,
+		}
+
+		if len(connections) > 1 {
+			c := AsConnection(connections[0])
+			c.Uptime = int64(ages[connections[0].IfName])
+			branch.PrimaryConnection = c
+			if addrs := connections[0].AddrInfo; len(addrs) > 0 {
+				sort.Sort(network.AddressMask(addrs))
+				branch.IPAddress = addrs[0].Local
+			}
+			branch.NetworkStatus = c.Status
+		}
+
+		if len(connections) > 2 {
+			c := AsConnection(connections[1])
+			c.Uptime = int64(ages[connections[1].IfName])
+			branch.FailoverConnection1 = c
 		}
 
 		buf, err := json.Marshal(branch)
-		if !ok {
+		if err != nil {
 			res.StatusCode = http.StatusInternalServerError
 			err = fmt.Errorf("failed to marshal: %+v", err)
 			break
 		}
 		fmt.Fprintf(os.Stderr, "writing: %s\n", string(buf))
 		res.Body = io.NopCloser(bytes.NewReader(buf))
-		/*
-		type Branch struct {
-			ID                  string     `json:"id"`
-			Name                string     `json:"name"`
-			Location            Location   `json:"location"`
-			PrimaryConnection   Connection `json:"primaryConnection"`
-			FailoverConnection1 Connection `json:"failoverConnection1"`
-			IPAddress           string     `json:"ipAddress"`
-			NetworkStatus       string     `json:"networkStatus"`
-			Metrics             Metrics    `json:"metrics"`
-		}
-		*/
 	}
 
 failure:
@@ -311,19 +352,6 @@ failure:
 		fmt.Fprintf(os.Stderr, "error writing request: %+v", err)
 		return
 	}
-}
-
-func sortRoutes(routes []nl.Route) {
-	sort.Slice(routes, func(i, j int) bool {
-		if !bytes.Equal(routes[i].Dst.Mask, routes[j].Dst.Mask) {
-			return bytes.Compare(routes[i].Dst.Mask, routes[j].Dst.Mask) < 0
-		}
-
-		if routes[i].Priority != routes[j].Priority {
-			return routes[i].Priority < routes[j].Priority
-		}
-		return false
-	})
 }
 
 var (
@@ -569,28 +597,6 @@ func main() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error removing prior interface: %+v\n", err)
 		os.Exit(1)
-	}
-
-	links, err := nl.LinkList()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error getting interfaces: %+v\n", err)
-		os.Exit(1)
-	}
-
-	for _, link := range links {
-		attrs := link.Attrs()
-		fmt.Fprintf(os.Stderr, "name: %s, mac: %s, flags: %s\n", attrs.Name, attrs.HardwareAddr, attrs.Flags)
-	}
-
-	routes, err := nl.RouteList(nil, nl.FAMILY_V4)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error getting routes: %+v\n", err)
-		os.Exit(1)
-	}
-
-	sortRoutes(routes)
-	for _, route := range routes {
-		fmt.Fprintf(os.Stderr, "route: %s\n", route.Dst.String())
 	}
 
 	listener, err := net.Listen("tcp", ":8080")
