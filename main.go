@@ -664,11 +664,12 @@ func main() {
 
 		t := time.Now().Add(dur)
 		conn.SetDeadline(t)
-		deadline, _ := context.WithDeadline(ctx, t)
+		deadline, cancel := context.WithDeadline(ctx, t)
 		go func() {
 			select {
 			case <-tokens:
 				// borrow token
+				cancel()
 			case <-deadline.Done():
 				return
 			}
