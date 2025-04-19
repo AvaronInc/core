@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -23,6 +24,32 @@ import (
 	"syscall"
 	"time"
 )
+
+type ResponseWriter struct {
+	*http.Response
+	*bytes.Buffer
+}
+
+func (rw ResponseWriter) Write(buf []byte) (int, error) {
+	return rw.Buffer.Write(buf)
+}
+
+func (rw ResponseWriter) WriteHeader(status int) {
+	rw.StatusCode = status
+}
+
+func (rw ResponseWriter) Header() http.Header {
+	res := rw.Response
+	if res.Header == nil {
+		res.Header = make(http.Header)
+	}
+	return res.Header
+}
+
+func truncate(f float64, precision int) float64 {
+	shift := math.Pow(10, float64(precision))
+	return math.Trunc(f*shift) / shift
+}
 
 // Location represents the geographical location of the branch
 type Location struct {
@@ -68,9 +95,9 @@ func AsConnection(l Linker) Connection {
 
 // Metrics represents various metrics related to the branch
 type Metrics struct {
-	Latency           float64 `json:"latency"`
+	Latency           int64   `json:"latency"`
 	PacketLoss        float64 `json:"packetLoss"`
-	Jitter            float64 `json:"jitter"`
+	Jitter            int64   `json:"jitter"`
 	ActiveConnections int     `json:"activeConnections"`
 }
 
@@ -109,9 +136,10 @@ func Analyze(links map[string]*network.Interface, metrics []network.TCPMetric) (
 			addresses[a.Local] = i
 		}
 	}
+	var latency, jitter time.Duration
 	for _, m := range metrics {
-		total.Latency += m.RoundTripTime
-		total.Jitter += m.RoundTripTimeVariance
+		latency += time.Duration(float64(time.Second)*m.RoundTripTime)
+		jitter += time.Duration(float64(time.Second)*m.RoundTripTimeVariance)
 		link, ok := addresses[m.Source.String()]
 		if !ok {
 			fmt.Fprintf(os.Stderr, "warning - failed to find link by address: %s\n", m.Source.String())
@@ -123,10 +151,12 @@ func Analyze(links map[string]*network.Interface, metrics []network.TCPMetric) (
 	}
 	fmt.Println("abc", oldest)
 	fmt.Println("abc", addresses)
-	total.Latency /= float64(len(metrics))
-	total.Jitter /= float64(len(metrics))
+	n := time.Duration(len(metrics))
 
-	total.PacketLoss = float64(lost) / float64(sent)
+	total.Latency = (latency / n).Milliseconds()
+	total.Jitter = (jitter / n).Milliseconds()
+
+	total.PacketLoss = truncate((float64(lost)/float64(sent))*100, 3)
 	return
 }
 
@@ -247,7 +277,7 @@ func handle(conn net.Conn) {
 		}
 
 		fmt.Fprintf(os.Stderr, "got buffer! %+v\n", public)
-	case "/self":
+	case "/sdwan":
 		fmt.Fprintf(os.Stderr, "SDWAN\n")
 		if req.Method != "GET" {
 			res.StatusCode = http.StatusMethodNotAllowed
@@ -309,7 +339,7 @@ func handle(conn net.Conn) {
 		branch := Branch{
 			ID:            string(PublicWireguardKey),
 			Name:          hostname,
-			NetworkStatus: "DOWN",
+			NetworkStatus: "degraded",
 			Metrics:       metrics,
 		}
 
@@ -330,7 +360,7 @@ func handle(conn net.Conn) {
 			branch.FailoverConnection1 = c
 		}
 
-		buf, err := json.Marshal(branch)
+		buf, err := json.Marshal([]Branch{branch})
 		if err != nil {
 			res.StatusCode = http.StatusInternalServerError
 			err = fmt.Errorf("failed to marshal: %+v", err)
@@ -338,6 +368,21 @@ func handle(conn net.Conn) {
 		}
 		fmt.Fprintf(os.Stderr, "writing: %s\n", string(buf))
 		res.Body = io.NopCloser(bytes.NewReader(buf))
+	default:
+		if req.Method != "GET" {
+			res.StatusCode = http.StatusNotFound
+			break
+		}
+		rw := ResponseWriter{
+			&res,
+			bytes.NewBuffer(nil),
+		}
+
+		path := filepath.Clean(req.URL.Path)
+		path = filepath.Join("/tmp/public/", path)
+		fmt.Fprintf(os.Stderr, "serving file: %s\n", path)
+		http.ServeFile(rw, req, path)
+		res.Body = io.NopCloser(rw.Buffer)
 	}
 
 failure:
