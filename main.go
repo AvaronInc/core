@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"crypto/tls"
 	"os"
 	"os/exec"
 	"os/user"
@@ -644,7 +645,16 @@ func main() {
 		os.Exit(1)
 	}
 
-	listener, err := net.Listen("tcp", ":8080")
+	cert, err := tls.LoadX509KeyPair("/etc/letsencrypt/live/isreal.estate/fullchain.pem",
+		"/etc/letsencrypt/live/isreal.estate/privkey.pem")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to load certificates: %+v", err)
+		os.Exit(1)
+	}
+
+	config := &tls.Config{Certificates: []tls.Certificate{cert}}
+
+	listener, err := tls.Listen("tcp", ":8443", config)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error starting listener: %+v\n", err)
 		return

@@ -21,7 +21,7 @@ install: build
 	mkdir -p $(PREFIX)/lib/systemd/system/
 	cp $(BIN).service $(PREFIX)/lib/systemd/system/$(BIN).service
 
-	useradd -m $(BIN) -s /bin/sh -r
+	useradd -m $(BIN) -s /bin/sh -r -G ssl
 
 	printf "%s ALL=(ALL) !ALL\n"                       "$(BIN)"  > "/etc/sudoers.d/$(BIN)"
 	printf "%s ALL=(ALL) NOPASSWD: /bin/ip, /bin/wg, /bin/ethtool\n" "$(BIN)" >> "/etc/sudoers.d/$(BIN)"
