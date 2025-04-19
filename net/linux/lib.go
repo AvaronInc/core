@@ -201,7 +201,14 @@ func (i *Interface) Type() string {
 }
 
 func (i *Interface) Status() string {
-	return i.Netlink.OperState
+	switch i.Netlink.OperState {
+	case "UP":
+		return "active"
+	case "UNKNOWN":
+		return "degraded"
+	default:
+		return "down"
+	}
 }
 
 func (i *Interface) Uptime() int64 {
