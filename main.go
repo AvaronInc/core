@@ -263,7 +263,7 @@ func handle(conn net.Conn) {
 			break
 		}
 
-		// decode
+		// decode - to assert it's valid base64
 		n, err = base64.StdEncoding.Decode(public[:], buf[:])
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "failed to deocde body: %+v\n", err)
@@ -276,8 +276,56 @@ func handle(conn net.Conn) {
 			fmt.Fprintf(os.Stderr, "Decoded buffer len (%d) != %d\n", n, len(public))
 			res.StatusCode = http.StatusBadRequest
 		}
+		fmt.Fprintf(os.Stderr, "got buffer! %s\n", string(buf[:]))
 
-		fmt.Fprintf(os.Stderr, "got buffer! %+v\n", public)
+		base64.StdEncoding.Encode(buf[:], public[:])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to re-encode body: %+v\n", err)
+			res.StatusCode = http.StatusBadRequest
+			break
+		}
+
+		files, err := os.ReadDir("pending")
+		if err == nil {
+			// fine
+		} else if os.IsNotExist(err) {
+			// fine
+			err := os.Mkdir("pending", 0700)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "failed to make 'pending' dir: %+v\n", err)
+				res.StatusCode = http.StatusInternalServerError
+				break
+			}
+		} else if len(files) == 0 {
+			// still fine
+		} else {
+			var i int
+			var match bool
+			for i = range files {
+				if strings.EqualFold(files[i].Name(), string(buf[:])) {
+					match = true
+					break
+				}
+			}
+
+			if match {
+				fmt.Fprintf(os.Stderr, "case insensitive, matching pending peer: %s & %s - rejecting & deleting\n", string(buf[:]), files[i].Name())
+				err := os.Remove(filepath.Join("pending", files[i].Name()))
+				if err != nil {
+					// something nasty is going on
+					panic(err)
+				}
+				res.StatusCode = http.StatusUnauthorized
+				break
+			}
+		}
+
+		err = os.MkdirAll(fmt.Sprintf("pending/%s", string(buf[:])), 0700)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to make pending peer dir: %+v\n", err)
+			res.StatusCode = http.StatusInternalServerError
+			break
+		}
 	case "/sdwan":
 		fmt.Fprintf(os.Stderr, "SDWAN\n")
 		if req.Method != "GET" {
