@@ -230,13 +230,13 @@ func handle(conn net.Conn) {
 			res.StatusCode = http.StatusMethodNotAllowed
 			break
 		}
-		res.Body = io.NopCloser(bytes.NewReader(PublicSSHKeys[:]))
+		res.Body = io.NopCloser(strings.NewReader(PublicSSHKeys))
 	case "/keys/wireguard":
 		if req.Method != "GET" {
 			res.StatusCode = http.StatusMethodNotAllowed
 			break
 		}
-		res.Body = io.NopCloser(bytes.NewReader(PublicWireguardKey[:]))
+		res.Body = io.NopCloser(strings.NewReader(PublicWireguardKey))
 	case "/link":
 		if req.Method != "POST" {
 			res.StatusCode = http.StatusMethodNotAllowed
@@ -450,8 +450,8 @@ failure:
 
 var (
 	Home               fs.FS
-	PublicSSHKeys      []byte
-	PublicWireguardKey []byte
+	PublicSSHKeys      string
+	PublicWireguardKey string
 )
 
 func controller() error {
@@ -566,6 +566,24 @@ func initVPN() error {
 	return err
 }
 
+func Listen(ctx context.Context, ch chan net.Conn, listener net.Listener) {
+	defer close(ch)
+	defer listener.Close()
+
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error accepting connection: %+v\n", err)
+			continue
+		}
+		select {
+		case ch<-conn:
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
 func main() {
 	if len(os.Args) < 1 {
 		fmt.Fprintf(os.Stderr, "unnamed binary")
@@ -669,7 +687,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "error reading %s: %+v\n", path, err)
 			continue
 		}
-		PublicSSHKeys = append(PublicSSHKeys, pub...)
+		PublicSSHKeys += string(pub)
 	}
 
 	if len(PublicSSHKeys) == 0 {
@@ -684,7 +702,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "failed to start wireguard for public-key derivation: %+v\n", err)
 		os.Exit(1)
 	} else {
-		PublicWireguardKey = out
+		PublicWireguardKey = string(out)
 	}
 
 	err = exec.Command("/bin/sh", "-c", "ip link del dev avaron||:").Run()
@@ -700,15 +718,27 @@ func main() {
 		os.Exit(1)
 	}
 
+	ctx := context.Background()
+	var http, https chan net.Conn = make(chan net.Conn), make(chan net.Conn)
+
 	config := &tls.Config{Certificates: []tls.Certificate{cert}}
 
 	listener, err := tls.Listen("tcp", ":8443", config)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error starting listener: %+v\n", err)
+		fmt.Fprintf(os.Stderr, "error starting HTTPS listener: %+v\n", err)
 		return
 	}
-	defer listener.Close()
 
+	go Listen(ctx, https, listener)
+	fmt.Fprintf(os.Stderr, "listening on %s\n", listener.Addr().String())
+
+	listener, err = net.Listen("tcp", ":8080")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error starting HTTP listener: %+v\n", err)
+		return
+	}
+
+	go Listen(ctx, http, listener)
 	fmt.Fprintf(os.Stderr, "listening on %s\n", listener.Addr().String())
 
 	// load balancer - connection times out quicker the more connections there are
@@ -718,8 +748,6 @@ func main() {
 	)
 	tokens := make(chan struct{})
 	duration := make(chan time.Duration)
-
-	ctx := context.Background()
 
 	go func() {
 		n := total
@@ -752,11 +780,16 @@ func main() {
 		}
 	}()
 
+	var conn net.Conn
+	var ok bool
+
 	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error accepting connection: %+v\n", err)
-			continue
+		select{
+		case conn, ok = <-http:
+		case conn, ok = <-https:
+		}
+		if !ok {
+			break
 		}
 
 		dur, ok := <-duration
