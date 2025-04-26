@@ -76,6 +76,73 @@ func truncate(f float64, precision int) float64 {
 	return math.Trunc(f*shift) / shift
 }
 
+func GenerateLinkLocal(k1, k2 Key) (ip1 net.IP, ip2 net.IP) {
+	if len(k1) != len(k2) {
+		panic("keys should be same length")
+	}
+	if len(k1) < net.IPv6len {
+		panic("key should be longer than IPv6 address")
+	}
+
+	var (
+		prefix = []byte { 0xfe, 0x80 }
+		i, cmp int
+	)
+
+	copy(ip1, prefix)
+	copy(ip2, prefix)
+
+	for i = 0; i < net.IPv6len-len(prefix); i++ {
+		if cmp != 0 {
+			// ok
+		} else if k1[i] < k2[i] {
+			cmp = -1
+		} else if k1[i] > k2[i] {
+			cmp = 1
+		}
+		ip1[i+len(prefix)] = k1[i]^k2[i]
+		ip2[i+len(prefix)] = k1[i]^k2[i]
+	}
+
+	i = net.IPv6len-1
+
+	if cmp < 0 {
+		ip1[i+len(prefix)] = (k1[i]&0xf0)|0x01
+		ip2[i+len(prefix)] = (k2[i]&0xf0)|0x02
+	} else if cmp > 0 {
+		ip1[i+len(prefix)] = (k1[i]&0xf0)|0x02
+		ip2[i+len(prefix)] = (k2[i]&0xf0)|0x01
+	} else {
+		panic("cowardly refusing to generate link-local addresses for the same host")
+	}
+
+	return
+}
+
+func (k Key) GlobalPrivateAddress() (ip net.IPNet) {
+	if len(k) < net.IPv6len {
+		panic("key should be longer than IPv6 address")
+	}
+
+	ip.Mask[0] = 0xff
+	ip.Mask[1] = 0xff
+
+	var (
+		prefix = []byte { 0xfc, 0x00, 0xa7, 0xa0, }
+		mask = []byte { 0xff, 0xff, 0xff, 0xff }
+	)
+
+	copy(ip.IP, prefix)
+	copy(ip.Mask, mask)
+
+	for i := 0; i < net.IPv6len-len(prefix); i++ {
+		ip.IP[i+len(prefix)] = k[i]
+	}
+
+	return
+}
+
+
 // Location represents the geographical location of the branch
 type Location struct {
 	Latitude  float64 `json:"lat"`
