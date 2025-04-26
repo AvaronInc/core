@@ -38,22 +38,22 @@ sudo ip link    set up  dev avaron
 sudo ip route add "$(avaron netmask "$address/$mask")" dev avaron src "$address"||:
 
 (
-	cd links
-	for link in *; do
+	cd peers
+	for peer in *; do
 		# HOSTNAME or EXTERNAL IP
 		if ! read -r host; then
-			echo "configuration error: unable to find external IP or hostname for link $link" 1>&2
+			echo "configuration error: unable to find external IP or hostname for peer $peer" 1>&2
 			continue
-		fi < "$link/host"
+		fi < "$peer/host"
 
 		# INTERNAL NETMASK for the Avaron interface
-		if ! [ -f "$link/port" ]; then
+		if ! [ -f "$peer/port" ]; then
 			port=51820
-		elif ! read -r  < "$link/port"; then
-			echo "configuration error: failed to read port for $link" 1>&2
+		elif ! read -r  < "$peer/port"; then
+			echo "configuration error: failed to read port for $peer" 1>&2
 			exit 1
 		fi
 
-		sudo wg set avaron link "$(echo "$link" | tr '-' '/')" endpoint "$host:$port" allowed-ips 0.0.0.0/0
+		sudo wg set avaron peer "$(echo "$peer" | tr '-' '/')" endpoint "$host:$port" allowed-ips 0.0.0.0/0
 	done
 )

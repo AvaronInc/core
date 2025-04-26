@@ -554,19 +554,19 @@ func controller() error {
 		if err != nil {
 			return fmt.Errorf("failed writing mask file: %+v", err)
 		}
-	case "link":
+	case "peer":
 		if len(os.Args) <= 2 {
 			return fmt.Errorf("not enough arguments")
 		}
-		link := fmt.Sprintf("http://%s/keys/wireguard", os.Args[2])
-		r1, err := http.Get(link)
+		peer := fmt.Sprintf("http://%s/keys/wireguard", os.Args[2])
+		r1, err := http.Get(peer)
 		if err != nil {
 			return err
 		}
 		defer r1.Body.Close()
 
 		if r1.StatusCode != http.StatusOK {
-			return fmt.Errorf("%s responded with %s", link, r1.Status)
+			return fmt.Errorf("%s responded with %s", peer, r1.Status)
 		}
 
 		wireguard, err := io.ReadAll(r1.Body)
@@ -574,15 +574,15 @@ func controller() error {
 			return fmt.Errorf("reading response body: %+v", err)
 		}
 
-		link = fmt.Sprintf("http://%s/keys/ssh", os.Args[2])
-		r2, err := http.Get(link)
+		peer = fmt.Sprintf("http://%s/keys/ssh", os.Args[2])
+		r2, err := http.Get(peer)
 		if err != nil {
 			return err
 		}
 		defer r2.Body.Close()
 
 		if r2.StatusCode != http.StatusOK {
-			return fmt.Errorf("%s responded with %s", link, r2.Status)
+			return fmt.Errorf("%s responded with %s", peer, r2.Status)
 		}
 
 		ssh, err := io.ReadAll(r2.Body)
@@ -591,14 +591,14 @@ func controller() error {
 		}
 
 		wireguard = bytes.TrimSpace(wireguard)
-		dir := fmt.Sprintf("links/%s", strings.Replace(string(wireguard), "/", "-", -1))
+		dir := fmt.Sprintf("peers/%s", strings.Replace(string(wireguard), "/", "-", -1))
 		err = os.Mkdir(dir, 0755)
 		if err != nil {
 			return fmt.Errorf("reading response body: %+v", err)
 		}
 
 		// TODO: rm -rf on failure
-		url, _ := url.Parse(link)
+		url, _ := url.Parse(peer)
 		host := url.Host
 		if i := strings.Index(host, ":"); i != 0 {
 			host = host[:i]
@@ -798,11 +798,11 @@ func (p *peerFS) Branch() *Branch {
 }
 
 func GetPeers() (map[Key]Peer, error) {
-	entries, err := os.ReadDir("links")
+	entries, err := os.ReadDir("peers")
 
 	peers := make(map[Key]Peer, len(entries))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to read links directory: %+v\n", err)
+		fmt.Fprintf(os.Stderr, "failed to read peers directory: %+v\n", err)
 		// this is fine
 		return peers, nil
 	}
@@ -813,7 +813,7 @@ func GetPeers() (map[Key]Peer, error) {
 		if err != nil {
 			return peers, fmt.Errorf("failed to parse key '%s': %+v\n", entry.Name(), err)
 		}
-		dir := filepath.Join("links", entry.Name())
+		dir := filepath.Join("peers", entry.Name())
 		address, err := os.ReadFile(filepath.Join(dir, "address"))
 		if err != nil {
 			return peers, fmt.Errorf("failed to read address for peer '%s': %+v\n", entry.Name(), err)
