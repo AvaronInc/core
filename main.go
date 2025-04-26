@@ -26,6 +26,30 @@ import (
 	"time"
 )
 
+type Key [32]byte
+
+func (k Key) String() string {
+	return base64.StdEncoding.EncodeToString(k[:])
+}
+
+func (k Key) UnmarshalText(buf []byte) (int64, error) {
+	if len(buf) < 45 {
+		return 0, io.ErrShortBuffer
+	}
+
+	_, err := base64.StdEncoding.Decode(k[:], buf[:45])
+	if err != nil {
+		return 0, err
+	}
+	return 45, err
+}
+
+func (k Key) MarshalText() ([]byte, error) {
+	buf := make([]byte, 45)
+	base64.StdEncoding.Encode(buf[:], k[:])
+	return buf, nil
+}
+
 type ResponseWriter struct {
 	*http.Response
 	*bytes.Buffer
@@ -243,47 +267,25 @@ func handle(conn net.Conn) {
 			break
 		}
 		fmt.Fprintf(os.Stderr, "pairing with %s\n", conn.RemoteAddr().String())
-		var (
-			buf    [45]byte
-			public [32]byte
-		)
-
 		// check content-length
-		if a, b := req.ContentLength, int64(len(buf)); a < b || a > b+1 {
-			fmt.Fprintf(os.Stderr, "Request Content-Length (%d) != %d +/- 1/0\n", a, b)
+		if l := req.ContentLength; l < 45 || l > 45+1 {
+			fmt.Fprintf(os.Stderr, "Request Content-Length (%d) != %d +/- 1/0\n", l, 45)
 			res.StatusCode = http.StatusBadRequest
 			break
 		}
 
 		// read body
-		n, err := req.Body.Read(buf[:])
+		r := base64.NewDecoder(base64.StdEncoding, io.LimitReader(req.Body, 45))
+
+		var key Key
+		_, err := io.ReadFull(r, key[:])
 		if err != nil && err != io.EOF {
-			fmt.Fprintf(os.Stderr, "failed to read body: %+v\n", err)
+			fmt.Fprintf(os.Stderr, "failed to public key: %+v\n", err)
 			res.StatusCode = http.StatusBadRequest
 			break
 		}
 
-		// decode - to assert it's valid base64
-		n, err = base64.StdEncoding.Decode(public[:], buf[:])
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed to deocde body: %+v\n", err)
-			res.StatusCode = http.StatusBadRequest
-			break
-		}
-
-		// check decoded body length
-		if n != len(public) {
-			fmt.Fprintf(os.Stderr, "Decoded buffer len (%d) != %d\n", n, len(public))
-			res.StatusCode = http.StatusBadRequest
-		}
-		fmt.Fprintf(os.Stderr, "got buffer! %s\n", string(buf[:]))
-
-		base64.StdEncoding.Encode(buf[:], public[:])
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed to re-encode body: %+v\n", err)
-			res.StatusCode = http.StatusBadRequest
-			break
-		}
+		fmt.Fprintf(os.Stderr, "got buffer! %s\n", key.String())
 
 		files, err := os.ReadDir("pending")
 		if err == nil {
@@ -302,14 +304,14 @@ func handle(conn net.Conn) {
 			var i int
 			var match bool
 			for i = range files {
-				if strings.EqualFold(files[i].Name(), string(buf[:])) {
+				if strings.EqualFold(files[i].Name(), key.String()) {
 					match = true
 					break
 				}
 			}
 
 			if match {
-				fmt.Fprintf(os.Stderr, "case insensitive, matching pending link: %s & %s - rejecting & deleting\n", string(buf[:]), files[i].Name())
+				fmt.Fprintf(os.Stderr, "case insensitive, matching pending link: %s & %s - rejecting & deleting\n", key.String(), files[i].Name())
 				err := os.Remove(filepath.Join("pending", files[i].Name()))
 				if err != nil {
 					// something nasty is going on
@@ -320,7 +322,7 @@ func handle(conn net.Conn) {
 			}
 		}
 
-		err = os.MkdirAll(fmt.Sprintf("pending/%s", string(buf[:])), 0700)
+		err = os.MkdirAll(fmt.Sprintf("pending/%s", key.String()), 0700)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "failed to make pending link dir: %+v\n", err)
 			res.StatusCode = http.StatusInternalServerError
@@ -702,6 +704,61 @@ func Serve(ctx context.Context) {
 	}
 }
 
+type Peer interface {
+	URL() *url.URL
+	Branch() *Branch
+}
+
+type peerFS struct {
+	address string
+	branch Branch
+}
+
+func (p *peerFS) URL() *url.URL {
+	var host string
+	host = fmt.Sprintf("%s", p.address)
+	return &url.URL{
+		Scheme:      "http",
+		Host:        host,
+		Path:        "/sdwan",
+		Fragment:    "",
+		RawFragment: "",
+	}
+}
+
+func (p *peerFS) Branch() *Branch {
+	return &p.branch
+}
+
+func GetPeers() (map[Key]Peer, error) {
+	entries, err := os.ReadDir("links")
+
+	peers := make(map[Key]Peer, len(entries))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to read links directory: %+v\n", err)
+		// this is fine
+		return peers, nil
+	}
+
+	for _, entry := range entries {
+		var k Key
+		_, err := k.UnmarshalText([]byte(entry.Name()))
+		if err != nil {
+			return peers, fmt.Errorf("failed to parse key '%s': %+v\n", entry.Name(), err)
+		}
+		dir := filepath.Join("links", entry.Name())
+		address, err := os.ReadFile(filepath.Join(dir, "address"))
+		if err != nil {
+			return peers, fmt.Errorf("failed to read address for peer '%s': %+v\n", entry.Name(), err)
+		}
+		peers[k] = &peerFS{
+			address: string(address),
+		}
+	}
+
+	return peers, nil
+}
+
 func main() {
 	if len(os.Args) < 1 {
 		fmt.Fprintf(os.Stderr, "unnamed binary")
@@ -831,4 +888,86 @@ func main() {
 
 	ctx := context.Background()
 	Serve(ctx)
+
+	type Value struct{}
+
+	updates := make(chan Branch)
+	client := http.DefaultClient
+
+	peers, err := GetPeers()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed getting peers: %+v\n", err)
+		os.Exit(1)
+	}
+
+	for key, peer := range peers {
+		fetch := func() error {
+			req := &http.Request{
+				URL:        peer.URL(),
+				Proto:      "HTTP/1.1",
+				ProtoMajor: 1,
+				ProtoMinor: 0,
+			}
+
+			res, err := client.Do(req)
+			if err != nil {
+				return err
+			}
+
+			defer res.Body.Close()
+			dec := json.NewDecoder(res.Body)
+
+			if t, _ := dec.Token(); t != json.Delim('[') {
+				return fmt.Errorf("expected '[' as starting delimeter")
+			}
+
+			var branch Branch
+			for dec.More() {
+				err = dec.Decode(&branch)
+				if err != nil {
+					return err
+				}
+				select {
+				case updates <- branch:
+				case <-ctx.Done():
+					return nil
+				}
+			}
+
+			if t, _ := dec.Token(); t != json.Delim(']') {
+				return fmt.Errorf("expected ']' as starting delimeter")
+			}
+
+			return nil
+		}
+
+		go func(key Key) {
+			ticker := time.NewTicker(time.Second * 5)
+			for {
+				select {
+				case <-ticker.C:
+				case <-ctx.Done():
+					return
+				}
+				err := fetch()
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "error fething updates: %+v", err)
+				}
+			}
+		}(key)
+	}
+
+	for {
+		select {
+		case branch := <-updates:
+			var k Key
+			_, err := k.UnmarshalText([]byte(branch.ID))
+			if err != nil {
+				panic(err)
+			}
+			*peers[k].Branch() = branch
+		case <-ctx.Done():
+			return
+		}
+	}
 }
