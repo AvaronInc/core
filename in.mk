@@ -26,7 +26,7 @@ install: build
 	printf "%s ALL=(ALL) !ALL\n"                       "$(BIN)"  > "/etc/sudoers.d/$(BIN)"
 	printf "%s ALL=(ALL) NOPASSWD: /bin/ip, /bin/wg, /bin/ethtool\n" "$(BIN)" >> "/etc/sudoers.d/$(BIN)"
 
-	su $(BIN) sh -c 'cd && yes "" | ssh-keygen && mkdir -p peers wireguard'
+	su $(BIN) sh -c 'cd && yes "" | ssh-keygen && mkdir -p links wireguard'
 	su $(BIN) sh -c 'cd ~/wireguard && touch private && chmod 600 private && chown $(BIN) private'
 	su $(BIN) sh -c 'cd ~/wireguard && wg genkey | tee private | wg pubkey > public'
 	su $(BIN) sh -c 'cd ~/wireguard && chmod 400 private'
@@ -37,7 +37,7 @@ uninstall:
 	rm -f /etc/$(BIN)/key \
 		$(PREFIX)/lib/systemd/$(BIN).service \
 		$(PREFIX)/var/lib/$(BIN)/key ||:
-	rm -rf $(PREFIX)/var/lib/$(BIN)/peers ||:
+	rm -rf $(PREFIX)/var/lib/$(BIN)/links ||:
 	rmdir /etc/$(BIN) ||:
 	rmdir $(PREFIX)/var/lib/$(BIN) ||:
 	userdel -rf $(BIN)

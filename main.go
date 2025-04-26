@@ -237,7 +237,7 @@ func handle(conn net.Conn) {
 			break
 		}
 		res.Body = io.NopCloser(bytes.NewReader(PublicWireguardKey[:]))
-	case "/peer":
+	case "/link":
 		if req.Method != "POST" {
 			res.StatusCode = http.StatusMethodNotAllowed
 			break
@@ -309,7 +309,7 @@ func handle(conn net.Conn) {
 			}
 
 			if match {
-				fmt.Fprintf(os.Stderr, "case insensitive, matching pending peer: %s & %s - rejecting & deleting\n", string(buf[:]), files[i].Name())
+				fmt.Fprintf(os.Stderr, "case insensitive, matching pending link: %s & %s - rejecting & deleting\n", string(buf[:]), files[i].Name())
 				err := os.Remove(filepath.Join("pending", files[i].Name()))
 				if err != nil {
 					// something nasty is going on
@@ -322,7 +322,7 @@ func handle(conn net.Conn) {
 
 		err = os.MkdirAll(fmt.Sprintf("pending/%s", string(buf[:])), 0700)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed to make pending peer dir: %+v\n", err)
+			fmt.Fprintf(os.Stderr, "failed to make pending link dir: %+v\n", err)
 			res.StatusCode = http.StatusInternalServerError
 			break
 		}
@@ -485,7 +485,7 @@ func controller() error {
 		if err != nil {
 			return fmt.Errorf("failed writing mask file: %+v", err)
 		}
-	case "peer":
+	case "link":
 		if len(os.Args) <= 2 {
 			return fmt.Errorf("not enough arguments")
 		}
@@ -522,7 +522,7 @@ func controller() error {
 		}
 
 		wireguard = bytes.TrimSpace(wireguard)
-		dir := fmt.Sprintf("peers/%s", strings.Replace(string(wireguard), "/", "-", -1))
+		dir := fmt.Sprintf("links/%s", strings.Replace(string(wireguard), "/", "-", -1))
 		err = os.Mkdir(dir, 0755)
 		if err != nil {
 			return fmt.Errorf("reading response body: %+v", err)
