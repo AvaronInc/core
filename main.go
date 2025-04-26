@@ -746,8 +746,11 @@ func main() {
 		total   = 256
 		timeout = 10 * time.Second
 	)
-	tokens := make(chan struct{})
-	duration := make(chan time.Duration)
+
+	var (
+		tokens = make(chan struct{})
+		deadlines = make(chan time.Time)
+	)
 
 	go func() {
 		n := total
@@ -756,6 +759,7 @@ func main() {
 			// or
 			// (timeout*total) / (timeout*n)
 			d := (time.Duration(n+1) * timeout) / (time.Duration(total + 1))
+			t := time.Now().Add(d)
 			fmt.Fprintf(os.Stderr, "n: %d\n", n)
 			if n > 0 {
 				select {
@@ -763,7 +767,7 @@ func main() {
 					n--
 				case <-tokens:
 					n++
-				case duration <- d:
+				case deadlines <- t:
 				case <-ctx.Done():
 					return
 				}
@@ -771,7 +775,7 @@ func main() {
 				select {
 				case <-tokens:
 					n++
-				case duration <- d:
+				case deadlines <- t:
 				case <-ctx.Done():
 					return
 				}
@@ -780,42 +784,47 @@ func main() {
 		}
 	}()
 
-	var conn net.Conn
-	var ok bool
+	go func() {
+		var (
+			d time.Time
+			conn net.Conn
+			ok bool
+		)
 
-	for {
-		select{
-		case conn, ok = <-http:
-		case conn, ok = <-https:
-		}
-		if !ok {
-			break
-		}
-
-		dur, ok := <-duration
-		if !ok {
-			break
-		}
-		fmt.Fprintf(os.Stderr, "dur: %20s\n", dur)
-
-		t := time.Now().Add(dur)
-		conn.SetDeadline(t)
-		deadline, cancel := context.WithDeadline(ctx, t)
-		go func() {
-			select {
-			case <-tokens:
-				// borrow token
-				cancel()
-			case <-deadline.Done():
-				return
+		for {
+			select{
+			case conn, ok = <-http:
+			case conn, ok = <-https:
 			}
-			handle(conn)
-			conn.Close()
-			select {
-			case tokens <- struct{}{}:
-				// return token
-			case <-ctx.Done():
+
+			if !ok {
+				break
 			}
-		}()
-	}
+
+			if d, ok = <-deadlines; !ok {
+				break
+			}
+
+			fmt.Fprintf(os.Stderr, "duration: %20s\n", d.Sub(time.Now()))
+			conn.SetDeadline(d)
+			deadline, cancel := context.WithDeadline(ctx, d)
+			go func() {
+				defer cancel()
+				select {
+				case <-tokens:
+					// borrow token
+					cancel()
+				case <-deadline.Done():
+					return
+				}
+				handle(conn)
+				conn.Close()
+				select {
+				case tokens <- struct{}{}:
+					// return token
+				case <-ctx.Done():
+				}
+			}()
+		}
+	}()
 }
