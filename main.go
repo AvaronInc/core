@@ -584,6 +584,124 @@ func Listen(ctx context.Context, ch chan net.Conn, listener net.Listener) {
 	}
 }
 
+func Serve(ctx context.Context) {
+	cert, err := tls.LoadX509KeyPair("/etc/letsencrypt/live/isreal.estate/fullchain.pem",
+		"/etc/letsencrypt/live/isreal.estate/privkey.pem")
+
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to load certificates: %+v", err)
+		os.Exit(1)
+	}
+
+	config := &tls.Config{Certificates: []tls.Certificate{cert}}
+
+	listener, err := tls.Listen("tcp", ":8443", config)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error starting HTTPS listener: %+v\n", err)
+		return
+	}
+
+	https := make(chan net.Conn)
+	go Listen(ctx, https, listener)
+
+	fmt.Fprintf(os.Stderr, "listening on %s\n", listener.Addr().String())
+
+	listener, err = net.Listen("tcp", ":8080")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error starting HTTP listener: %+v\n", err)
+		return
+	}
+
+	http := make(chan net.Conn)
+	go Listen(ctx, http, listener)
+	fmt.Fprintf(os.Stderr, "listening on %s\n", listener.Addr().String())
+
+	// load balancer - connection times out quicker the more connections there are
+	const (
+		total   = 256
+		timeout = 10 * time.Second
+	)
+
+	var (
+		tokens    = make(chan struct{})
+		deadlines = make(chan time.Time)
+	)
+
+	go func() {
+		n := total
+		for {
+			// timeout*(total/n)
+			// or
+			// (timeout*total) / (timeout*n)
+			d := (time.Duration(n+1) * timeout) / (time.Duration(total + 1))
+			t := time.Now().Add(d)
+			fmt.Fprintf(os.Stderr, "n: %d\n", n)
+			if n > 0 {
+				select {
+				case tokens <- struct{}{}:
+					n--
+				case <-tokens:
+					n++
+				case deadlines <- t:
+				case <-ctx.Done():
+					return
+				}
+			} else {
+				select {
+				case <-tokens:
+					n++
+				case deadlines <- t:
+				case <-ctx.Done():
+					return
+				}
+			}
+
+		}
+	}()
+
+	var (
+		d    time.Time
+		conn net.Conn
+		ok   bool
+	)
+
+	for {
+		select {
+		case conn, ok = <-http:
+		case conn, ok = <-https:
+		}
+
+		if !ok {
+			break
+		}
+
+		if d, ok = <-deadlines; !ok {
+			break
+		}
+
+		fmt.Fprintf(os.Stderr, "duration: %20s\n", d.Sub(time.Now()))
+		conn.SetDeadline(d)
+		deadline, cancel := context.WithDeadline(ctx, d)
+		go func() {
+			defer cancel()
+			select {
+			case <-tokens:
+				// borrow token
+				cancel()
+			case <-deadline.Done():
+				return
+			}
+			handle(conn)
+			conn.Close()
+			select {
+			case tokens <- struct{}{}:
+				// return token
+			case <-ctx.Done():
+			}
+		}()
+	}
+}
+
 func main() {
 	if len(os.Args) < 1 {
 		fmt.Fprintf(os.Stderr, "unnamed binary")
@@ -711,120 +829,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	cert, err := tls.LoadX509KeyPair("/etc/letsencrypt/live/isreal.estate/fullchain.pem",
-		"/etc/letsencrypt/live/isreal.estate/privkey.pem")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to load certificates: %+v", err)
-		os.Exit(1)
-	}
-
 	ctx := context.Background()
-	var http, https chan net.Conn = make(chan net.Conn), make(chan net.Conn)
-
-	config := &tls.Config{Certificates: []tls.Certificate{cert}}
-
-	listener, err := tls.Listen("tcp", ":8443", config)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error starting HTTPS listener: %+v\n", err)
-		return
-	}
-
-	go Listen(ctx, https, listener)
-	fmt.Fprintf(os.Stderr, "listening on %s\n", listener.Addr().String())
-
-	listener, err = net.Listen("tcp", ":8080")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error starting HTTP listener: %+v\n", err)
-		return
-	}
-
-	go Listen(ctx, http, listener)
-	fmt.Fprintf(os.Stderr, "listening on %s\n", listener.Addr().String())
-
-	// load balancer - connection times out quicker the more connections there are
-	const (
-		total   = 256
-		timeout = 10 * time.Second
-	)
-
-	var (
-		tokens    = make(chan struct{})
-		deadlines = make(chan time.Time)
-	)
-
-	go func() {
-		n := total
-		for {
-			// timeout*(total/n)
-			// or
-			// (timeout*total) / (timeout*n)
-			d := (time.Duration(n+1) * timeout) / (time.Duration(total + 1))
-			t := time.Now().Add(d)
-			fmt.Fprintf(os.Stderr, "n: %d\n", n)
-			if n > 0 {
-				select {
-				case tokens <- struct{}{}:
-					n--
-				case <-tokens:
-					n++
-				case deadlines <- t:
-				case <-ctx.Done():
-					return
-				}
-			} else {
-				select {
-				case <-tokens:
-					n++
-				case deadlines <- t:
-				case <-ctx.Done():
-					return
-				}
-			}
-
-		}
-	}()
-
-	go func() {
-		var (
-			d    time.Time
-			conn net.Conn
-			ok   bool
-		)
-
-		for {
-			select {
-			case conn, ok = <-http:
-			case conn, ok = <-https:
-			}
-
-			if !ok {
-				break
-			}
-
-			if d, ok = <-deadlines; !ok {
-				break
-			}
-
-			fmt.Fprintf(os.Stderr, "duration: %20s\n", d.Sub(time.Now()))
-			conn.SetDeadline(d)
-			deadline, cancel := context.WithDeadline(ctx, d)
-			go func() {
-				defer cancel()
-				select {
-				case <-tokens:
-					// borrow token
-					cancel()
-				case <-deadline.Done():
-					return
-				}
-				handle(conn)
-				conn.Close()
-				select {
-				case tokens <- struct{}{}:
-					// return token
-				case <-ctx.Done():
-				}
-			}()
-		}
-	}()
+	Serve(ctx)
 }
