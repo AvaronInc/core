@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -14,7 +15,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"crypto/tls"
 	"os"
 	"os/exec"
 	"os/user"
@@ -139,8 +139,8 @@ func Analyze(links map[string]*network.Interface, metrics []network.TCPMetric) (
 	}
 	var latency, jitter time.Duration
 	for _, m := range metrics {
-		latency += time.Duration(float64(time.Second)*m.RoundTripTime)
-		jitter += time.Duration(float64(time.Second)*m.RoundTripTimeVariance)
+		latency += time.Duration(float64(time.Second) * m.RoundTripTime)
+		jitter += time.Duration(float64(time.Second) * m.RoundTripTimeVariance)
 		link, ok := addresses[m.Source.String()]
 		if !ok {
 			fmt.Fprintf(os.Stderr, "warning - failed to find link by address: %s\n", m.Source.String())
@@ -577,7 +577,7 @@ func Listen(ctx context.Context, ch chan net.Conn, listener net.Listener) {
 			continue
 		}
 		select {
-		case ch<-conn:
+		case ch <- conn:
 		case <-ctx.Done():
 			return
 		}
@@ -748,7 +748,7 @@ func main() {
 	)
 
 	var (
-		tokens = make(chan struct{})
+		tokens    = make(chan struct{})
 		deadlines = make(chan time.Time)
 	)
 
@@ -786,13 +786,13 @@ func main() {
 
 	go func() {
 		var (
-			d time.Time
+			d    time.Time
 			conn net.Conn
-			ok bool
+			ok   bool
 		)
 
 		for {
-			select{
+			select {
 			case conn, ok = <-http:
 			case conn, ok = <-https:
 			}
