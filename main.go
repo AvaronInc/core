@@ -28,7 +28,7 @@ import (
 
 var (
 	IPv6PeerToPeerMask = [16]byte{
-		0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF ^ 0x03,
+		0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFC,
 	}
 )
 
@@ -43,12 +43,9 @@ func (k *Key) UnmarshalText(buf []byte) (int64, error) {
 		return 0, io.ErrShortBuffer
 	}
 
-	fmt.Fprintf(os.Stderr, "decoding buf: %s\n", buf[:44])
-	_, err := base64.StdEncoding.Decode(k[:], buf[:44])
-	if err != nil {
-		return 0, err
-	}
-	return 44, err
+	fmt.Fprintf(os.Stderr, "decoding buf: %s\n", buf[:])
+	n, err := base64.StdEncoding.Decode(k[:], buf[:])
+	return int64(n), err
 }
 
 func (k Key) MarshalText() ([]byte, error) {
@@ -87,13 +84,14 @@ func truncate(f float64, precision int) float64 {
 	return math.Trunc(f*shift) / shift
 }
 
-func GenerateLinkLocal(k1, k2 Key) (n1, n2 net.IPNet) {
+func GenerateLinkLocal(k1, k2 *Key) (n1, n2 net.IPNet) {
 	if len(k1) != len(k2) {
 		panic("keys should be same length")
 	}
 	if len(k1) < net.IPv6len {
 		panic("key should be longer than IPv6 address")
 	}
+	fmt.Fprintf(os.Stderr, "XORING\n%s\n%s\n", k1.String(), k2.String())
 
 	var (
 		prefix = []byte{0xfe, 0x80}
@@ -124,11 +122,11 @@ func GenerateLinkLocal(k1, k2 Key) (n1, n2 net.IPNet) {
 	i = net.IPv6len - 1
 
 	if cmp < 0 {
-		n1.IP[i] = (k1[i] & 0xf0) | 0x01
-		n2.IP[i] = (k2[i] & 0xf0) | 0x02
+		n1.IP[i] = (n1.IP[i] & 0xfc) | 0x01
+		n2.IP[i] = (n2.IP[i] & 0xfc) | 0x02
 	} else if cmp > 0 {
-		n1.IP[i] = (k1[i] & 0xf0) | 0x02
-		n2.IP[i] = (k2[i] & 0xf0) | 0x01
+		n1.IP[i] = (n1.IP[i] & 0xfc) | 0x02
+		n2.IP[i] = (n2.IP[i] & 0xfc) | 0x01
 	} else {
 		panic("cowardly refusing to generate link-local addresses for the same host")
 	}
@@ -143,9 +141,6 @@ func (k Key) GlobalAddress() (n net.IPNet) {
 	if len(k) < net.IPv6len {
 		panic("key should be longer than IPv6 address")
 	}
-
-	n.Mask[0] = 0xff
-	n.Mask[1] = 0xff
 
 	var (
 		prefix = []byte{0xfc, 0x00, 0xa7, 0xa0}
@@ -362,7 +357,7 @@ func handle(conn net.Conn) {
 		}
 
 		// read body
-		r := base64.NewDecoder(base64.StdEncoding, io.LimitReader(req.Body, 44))
+		r := base64.NewDecoder(base64.StdEncoding, req.Body)
 
 		var key Key
 		_, err := io.ReadFull(r, key[:])
@@ -600,7 +595,7 @@ func controller() error {
 		// TODO: rm -rf on failure
 		url, _ := url.Parse(peer)
 		host := url.Host
-		if i := strings.Index(host, ":"); i != 0 {
+		if i := strings.Index(host, ":"); i > 0 {
 			host = host[:i]
 		}
 		host = fmt.Sprintf("%s\n", host)
@@ -625,13 +620,13 @@ func controller() error {
 		defer cancel()
 
 		r, w := io.Pipe()
-		ch := make(chan Key)
+		ch := make(chan Peer)
 
 		go func() {
 			defer close(ch)
-			for key := range peers {
+			for _, peer := range peers {
 				select {
-				case ch <- key:
+				case ch <- peer:
 				case <-ctx.Done():
 					return
 				}
@@ -639,7 +634,7 @@ func controller() error {
 		}()
 
 		go func() {
-			WritePeerConfiguration(w, PublicWireguardKey, ch)
+			WritePeerConfiguration(w, &PublicWireguardKey, ch)
 			w.Close()
 		}()
 		if err = Shell(ctx, r); err != nil {
@@ -709,7 +704,7 @@ func Serve(ctx context.Context) {
 
 	var (
 		tokens    = make(chan struct{})
-		deadlines = make(chan time.Time)
+		deadlines = make(chan time.Duration)
 	)
 
 	go func() {
@@ -719,7 +714,6 @@ func Serve(ctx context.Context) {
 			// or
 			// (timeout*total) / (timeout*n)
 			d := (time.Duration(n+1) * timeout) / (time.Duration(total + 1))
-			t := time.Now().Add(d)
 			fmt.Fprintf(os.Stderr, "n: %d\n", n)
 			if n > 0 {
 				select {
@@ -727,7 +721,7 @@ func Serve(ctx context.Context) {
 					n--
 				case <-tokens:
 					n++
-				case deadlines <- t:
+				case deadlines <- d:
 				case <-ctx.Done():
 					return
 				}
@@ -735,7 +729,7 @@ func Serve(ctx context.Context) {
 				select {
 				case <-tokens:
 					n++
-				case deadlines <- t:
+				case deadlines <- d:
 				case <-ctx.Done():
 					return
 				}
@@ -745,7 +739,7 @@ func Serve(ctx context.Context) {
 	}()
 
 	var (
-		d    time.Time
+		d    time.Duration
 		conn net.Conn
 		ok   bool
 	)
@@ -764,9 +758,10 @@ func Serve(ctx context.Context) {
 			break
 		}
 
-		fmt.Fprintf(os.Stderr, "duration: %20s\n", d.Sub(time.Now()))
-		conn.SetDeadline(d)
-		deadline, cancel := context.WithDeadline(ctx, d)
+		fmt.Fprintf(os.Stderr, "duration: %20s\n", d)
+		t := time.Now().Add(d)
+		conn.SetDeadline(t)
+		deadline, cancel := context.WithDeadline(ctx, t)
 		go func() {
 			defer cancel()
 			select {
@@ -790,11 +785,13 @@ func Serve(ctx context.Context) {
 type Peer interface {
 	URL() *url.URL
 	Branch() *Branch
+	Key() *Key
 }
 
 type peerFS struct {
 	address string
 	branch  Branch
+	key     Key
 }
 
 func (p *peerFS) URL() *url.URL {
@@ -811,6 +808,10 @@ func (p *peerFS) URL() *url.URL {
 
 func (p *peerFS) Branch() *Branch {
 	return &p.branch
+}
+
+func (p *peerFS) Key() *Key {
+	return &p.key
 }
 
 func GetPeers() (map[Key]Peer, error) {
@@ -830,13 +831,15 @@ func GetPeers() (map[Key]Peer, error) {
 		if err != nil {
 			return peers, fmt.Errorf("failed to parse key '%s': %+v\n", entry.Name(), err)
 		}
+		fmt.Fprintf(os.Stderr, "parsed key: %s\n", k.String())
 		dir := filepath.Join("peers", entry.Name())
 		address, err := os.ReadFile(filepath.Join(dir, "address"))
 		if err != nil {
 			return peers, fmt.Errorf("failed to read address for peer '%s': %+v\n", entry.Name(), err)
 		}
 		peers[*k] = &peerFS{
-			address: string(address),
+			address: string(bytes.TrimSpace(address)),
+			key:     *k,
 		}
 		fmt.Fprintf(os.Stderr, "read peer: %s, %s\n", k.String(), string(address))
 	}
@@ -869,10 +872,15 @@ func Shell(ctx context.Context, r io.Reader) error {
 	return e1
 }
 
-func WritePeerConfiguration(w io.Writer, key Key, peers chan Key) (n int, e error) {
-	for key := range peers {
-		ours, theirs := GenerateLinkLocal(PublicWireguardKey, key)
-		remote := key.GlobalAddress()
+func WritePeerConfiguration(w io.Writer, key *Key, peers chan Peer) (n int, e error) {
+	for peer := range peers {
+		ours, theirs := GenerateLinkLocal(key, peer.Key())
+		remote := peer.Key().GlobalAddress()
+		n, e = fmt.Fprintf(w, "sudo wg set avaron peer %s endpoint %s:51820 allowed-ips ::/0\n", peer.Key().String(), peer.URL().Host)
+
+		if e != nil {
+			return
+		}
 		n, e = fmt.Fprintf(w, "sudo /usr/sbin/ip address replace dev avaron %s\n", ours.String())
 		if e != nil {
 			return
@@ -939,39 +947,6 @@ func main() {
 		}
 	}
 
-	buf, err := os.ReadFile("pid")
-	if err != nil && os.IsNotExist(err) {
-		if len(os.Args) > 1 {
-			fmt.Fprintf(os.Stderr, "attempted to invoking controller without existing process\n")
-			os.Exit(1)
-		}
-		createPIDFile()
-	} else if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to read PID file: %+v\n", err)
-		os.Exit(1)
-	} else if pid, err := strconv.Atoi(string(bytes.TrimSpace(buf))); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to read PID file: %+v\n", err)
-		os.Exit(1)
-	} else {
-		var e1, e2 error
-		var proc *os.Process
-		proc, e1 = os.FindProcess(pid)
-		if e1 == nil {
-			e2 = proc.Signal(syscall.Signal(0))
-		}
-		if e1 == nil && e2 == nil {
-			// controller mode
-			err := controller()
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "%+v\n", err)
-				os.Exit(1)
-			}
-			os.Exit(0)
-		} else {
-			createPIDFile()
-		}
-	}
-
 	// reading all SSH public keys
 	ssh := os.DirFS(".ssh")
 
@@ -1010,6 +985,39 @@ func main() {
 		os.Exit(1)
 	}
 
+	buf, err := os.ReadFile("pid")
+	if err != nil && os.IsNotExist(err) {
+		if len(os.Args) > 1 {
+			fmt.Fprintf(os.Stderr, "attempted to invoking controller without existing process\n")
+			os.Exit(1)
+		}
+		createPIDFile()
+	} else if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to read PID file: %+v\n", err)
+		os.Exit(1)
+	} else if pid, err := strconv.Atoi(string(bytes.TrimSpace(buf))); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to read PID file: %+v\n", err)
+		os.Exit(1)
+	} else {
+		var e1, e2 error
+		var proc *os.Process
+		proc, e1 = os.FindProcess(pid)
+		if e1 == nil {
+			e2 = proc.Signal(syscall.Signal(0))
+		}
+		if e1 == nil && e2 == nil {
+			// controller mode
+			err := controller()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "%+v\n", err)
+				os.Exit(1)
+			}
+			os.Exit(0)
+		} else {
+			createPIDFile()
+		}
+	}
+
 	ctx := context.Background()
 	go Serve(ctx)
 
@@ -1033,12 +1041,12 @@ func main() {
 	{
 		ctx, cancel := context.WithCancel(context.Background())
 		r, w := io.Pipe()
-		ch := make(chan Key)
+		ch := make(chan Peer)
 		go func() {
 			defer close(ch)
-			for key := range peers {
+			for _, peer := range peers {
 				select {
-				case ch <- key:
+				case ch <- peer:
 				case <-ctx.Done():
 					return
 				}
@@ -1053,7 +1061,7 @@ func main() {
 			fmt.Fprintf(w, "sudo /usr/sbin/ip address replace dev avaron %s\n", local.String())
 			fmt.Fprintf(w, "sudo /usr/bin/wg set avaron listen-port %d private-key %s\n", 51820, "wireguard/private")
 			fmt.Fprintf(w, "sudo /usr/sbin/ip link set up dev avaron\n")
-			WritePeerConfiguration(w, PublicWireguardKey, ch)
+			WritePeerConfiguration(w, &PublicWireguardKey, ch)
 			w.Close()
 		}()
 		err = Shell(ctx, r)
