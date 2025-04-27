@@ -57,6 +57,10 @@ func (k Key) MarshalText() ([]byte, error) {
 	return buf, nil
 }
 
+func (k Key) AsPath() string {
+	return strings.Replace(k.String(), "/", "-", -1)
+}
+
 type ResponseWriter struct {
 	*http.Response
 	*bytes.Buffer
@@ -342,7 +346,8 @@ func handle(conn net.Conn) {
 			res.StatusCode = http.StatusMethodNotAllowed
 			break
 		}
-		res.Body = io.NopCloser(bytes.NewReader(PublicWireguardKey[:]))
+		buf, _ := PublicWireguardKey.MarshalText()
+		res.Body = io.NopCloser(bytes.NewReader(buf))
 	case "/link":
 		if req.Method != "POST" {
 			res.StatusCode = http.StatusMethodNotAllowed
@@ -559,9 +564,15 @@ func controller() error {
 			return fmt.Errorf("%s responded with %s", peer, r1.Status)
 		}
 
-		wireguard, err := io.ReadAll(r1.Body)
+		buf, err := io.ReadAll(r1.Body)
 		if err != nil {
 			return fmt.Errorf("reading response body: %+v", err)
+		}
+
+		var key Key
+		_, err = key.UnmarshalText(bytes.TrimSpace(buf))
+		if err != nil {
+			return fmt.Errorf("failed to parse response as Wireguard Key: %+v", err)
 		}
 
 		peer = fmt.Sprintf("http://%s/keys/ssh", os.Args[2])
@@ -580,8 +591,7 @@ func controller() error {
 			return fmt.Errorf("reading response body: %+v", err)
 		}
 
-		wireguard = bytes.TrimSpace(wireguard)
-		dir := filepath.Join("peers", strings.Replace(string(wireguard), "/", "-", -1))
+		dir := filepath.Join("peers", key.AsPath())
 		err = os.Mkdir(dir, 0755)
 		if err != nil {
 			return fmt.Errorf("reading response body: %+v", err)
@@ -604,7 +614,7 @@ func controller() error {
 			return fmt.Errorf("failed writing ssh file: %+v", err)
 		}
 
-		fmt.Fprintf(os.Stderr, "got public keys - wg: %s, ssh: %s\n", string(wireguard), string(ssh))
+		fmt.Fprintf(os.Stderr, "got public keys - wg: %s, ssh: %s\n", key.String(), string(ssh))
 
 		peers, err := GetPeers()
 		if err != nil {
