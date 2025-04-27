@@ -2,6 +2,7 @@ package main
 
 import (
 	network "avaron/net/linux"
+	"avaron/whois"
 	"bufio"
 	"bytes"
 	"context"
@@ -356,6 +357,7 @@ func GetBranch() (Branch, error) {
 		Name:          hostname,
 		NetworkStatus: "degraded",
 		Metrics:       metrics,
+		Location:      MyLocation,
 	}
 
 	if len(connections) > 0 {
@@ -528,6 +530,7 @@ var (
 	Home               fs.FS
 	PublicSSHKeys      string
 	PublicWireguardKey Key
+	MyLocation         Location
 )
 
 func controller() error {
@@ -978,6 +981,17 @@ func main() {
 	} else if _, err = PublicWireguardKey.UnmarshalText(out); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to parse wireguard key: %+v\n", err)
 		os.Exit(1)
+	}
+
+	info, err := whois.Get()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to get coordinates\n", err)
+	}
+
+	MyLocation = Location{
+		Latitude:  info.Latitude(),
+		Longitude: info.Longitude(),
+		Address:   info.Address(),
 	}
 
 	buf, err := os.ReadFile("pid")
