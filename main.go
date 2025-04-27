@@ -661,36 +661,35 @@ func Listen(ctx context.Context, ch chan net.Conn, listener net.Listener) {
 }
 
 func Serve(ctx context.Context) {
-	cert, err := tls.LoadX509KeyPair("/etc/letsencrypt/live/isreal.estate/fullchain.pem",
+	var (
+		err         error
+		listener    net.Listener
+		http, https chan net.Conn
+		config      = &tls.Config{
+			Certificates: make([]tls.Certificate, 1),
+		}
+	)
+	config.Certificates[0], err = tls.LoadX509KeyPair("/etc/letsencrypt/live/isreal.estate/fullchain.pem",
 		"/etc/letsencrypt/live/isreal.estate/privkey.pem")
 
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to load certificates: %+v", err)
-		os.Exit(1)
-	}
-
-	config := &tls.Config{Certificates: []tls.Certificate{cert}}
-
-	listener, err := tls.Listen("tcp", ":8443", config)
-	if err != nil {
+	} else if listener, err := tls.Listen("tcp", ":8443", config); err != nil {
 		fmt.Fprintf(os.Stderr, "error starting HTTPS listener: %+v\n", err)
-		return
+	} else {
+		https = make(chan net.Conn)
+		go Listen(ctx, https, listener)
+		fmt.Fprintf(os.Stderr, "listening on %s\n", listener.Addr().String())
 	}
 
-	https := make(chan net.Conn)
-	go Listen(ctx, https, listener)
-
-	fmt.Fprintf(os.Stderr, "listening on %s\n", listener.Addr().String())
-
-	listener, err = net.Listen("tcp", ":8080")
-	if err != nil {
+	if listener, err = net.Listen("tcp", ":8080"); err != nil {
 		fmt.Fprintf(os.Stderr, "error starting HTTP listener: %+v\n", err)
-		return
+		os.Exit(1)
+	} else {
+		http = make(chan net.Conn)
+		go Listen(ctx, http, listener)
+		fmt.Fprintf(os.Stderr, "listening on %s\n", listener.Addr().String())
 	}
-
-	http := make(chan net.Conn)
-	go Listen(ctx, http, listener)
-	fmt.Fprintf(os.Stderr, "listening on %s\n", listener.Addr().String())
 
 	// load balancer - connection times out quicker the more connections there are
 	const (
