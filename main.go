@@ -26,26 +26,33 @@ import (
 	"time"
 )
 
+var (
+	IPv6PeerToPeerMask = [16]byte{
+		0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF ^ 0x03,
+	}
+)
+
 type Key [32]byte
 
 func (k Key) String() string {
 	return base64.StdEncoding.EncodeToString(k[:])
 }
 
-func (k Key) UnmarshalText(buf []byte) (int64, error) {
-	if len(buf) < 45 {
+func (k *Key) UnmarshalText(buf []byte) (int64, error) {
+	if len(buf) < 44 {
 		return 0, io.ErrShortBuffer
 	}
 
-	_, err := base64.StdEncoding.Decode(k[:], buf[:45])
+	fmt.Fprintf(os.Stderr, "decoding buf: %s\n", buf[:44])
+	_, err := base64.StdEncoding.Decode(k[:], buf[:44])
 	if err != nil {
 		return 0, err
 	}
-	return 45, err
+	return 44, err
 }
 
 func (k Key) MarshalText() ([]byte, error) {
-	buf := make([]byte, 45)
+	buf := make([]byte, 44)
 	base64.StdEncoding.Encode(buf[:], k[:])
 	return buf, nil
 }
@@ -76,7 +83,7 @@ func truncate(f float64, precision int) float64 {
 	return math.Trunc(f*shift) / shift
 }
 
-func GenerateLinkLocal(k1, k2 Key) (ip1 net.IP, ip2 net.IP) {
+func GenerateLinkLocal(k1, k2 Key) (n1, n2 net.IPNet) {
 	if len(k1) != len(k2) {
 		panic("keys should be same length")
 	}
@@ -85,12 +92,18 @@ func GenerateLinkLocal(k1, k2 Key) (ip1 net.IP, ip2 net.IP) {
 	}
 
 	var (
-		prefix = []byte { 0xfe, 0x80 }
+		prefix = []byte{0xfe, 0x80}
 		i, cmp int
 	)
 
-	copy(ip1, prefix)
-	copy(ip2, prefix)
+	n1.IP = make([]byte, net.IPv6len)
+	n1.Mask = make([]byte, net.IPv6len)
+	n2.IP = make([]byte, net.IPv6len)
+	n2.Mask = make([]byte, net.IPv6len)
+	copy(n1.IP, prefix)
+	copy(n2.IP, prefix)
+	copy(n1.Mask, IPv6PeerToPeerMask[:])
+	copy(n2.Mask, IPv6PeerToPeerMask[:])
 
 	for i = 0; i < net.IPv6len-len(prefix); i++ {
 		if cmp != 0 {
@@ -100,18 +113,18 @@ func GenerateLinkLocal(k1, k2 Key) (ip1 net.IP, ip2 net.IP) {
 		} else if k1[i] > k2[i] {
 			cmp = 1
 		}
-		ip1[i+len(prefix)] = k1[i]^k2[i]
-		ip2[i+len(prefix)] = k1[i]^k2[i]
+		n1.IP[i+len(prefix)] = k1[i] ^ k2[i]
+		n2.IP[i+len(prefix)] = k1[i] ^ k2[i]
 	}
 
-	i = net.IPv6len-1
+	i = net.IPv6len - 1
 
 	if cmp < 0 {
-		ip1[i+len(prefix)] = (k1[i]&0xf0)|0x01
-		ip2[i+len(prefix)] = (k2[i]&0xf0)|0x02
+		n1.IP[i] = (k1[i] & 0xf0) | 0x01
+		n2.IP[i] = (k2[i] & 0xf0) | 0x02
 	} else if cmp > 0 {
-		ip1[i+len(prefix)] = (k1[i]&0xf0)|0x02
-		ip2[i+len(prefix)] = (k2[i]&0xf0)|0x01
+		n1.IP[i] = (k1[i] & 0xf0) | 0x02
+		n2.IP[i] = (k2[i] & 0xf0) | 0x01
 	} else {
 		panic("cowardly refusing to generate link-local addresses for the same host")
 	}
@@ -119,29 +132,31 @@ func GenerateLinkLocal(k1, k2 Key) (ip1 net.IP, ip2 net.IP) {
 	return
 }
 
-func (k Key) GlobalPrivateAddress() (ip net.IPNet) {
+func (k Key) GlobalAddress() (n net.IPNet) {
+	n.IP = make([]byte, net.IPv6len)
+	n.Mask = make([]byte, net.IPv6len)
+
 	if len(k) < net.IPv6len {
 		panic("key should be longer than IPv6 address")
 	}
 
-	ip.Mask[0] = 0xff
-	ip.Mask[1] = 0xff
+	n.Mask[0] = 0xff
+	n.Mask[1] = 0xff
 
 	var (
-		prefix = []byte { 0xfc, 0x00, 0xa7, 0xa0, }
-		mask = []byte { 0xff, 0xff, 0xff, 0xff }
+		prefix = []byte{0xfc, 0x00, 0xa7, 0xa0}
+		mask   = []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
 	)
 
-	copy(ip.IP, prefix)
-	copy(ip.Mask, mask)
+	copy(n.IP, prefix)
+	copy(n.Mask, mask)
 
 	for i := 0; i < net.IPv6len-len(prefix); i++ {
-		ip.IP[i+len(prefix)] = k[i]
+		n.IP[i+len(prefix)] = k[i]
 	}
 
 	return
 }
-
 
 // Location represents the geographical location of the branch
 type Location struct {
@@ -327,7 +342,7 @@ func handle(conn net.Conn) {
 			res.StatusCode = http.StatusMethodNotAllowed
 			break
 		}
-		res.Body = io.NopCloser(strings.NewReader(PublicWireguardKey))
+		res.Body = io.NopCloser(bytes.NewReader(PublicWireguardKey[:]))
 	case "/link":
 		if req.Method != "POST" {
 			res.StatusCode = http.StatusMethodNotAllowed
@@ -335,14 +350,14 @@ func handle(conn net.Conn) {
 		}
 		fmt.Fprintf(os.Stderr, "pairing with %s\n", conn.RemoteAddr().String())
 		// check content-length
-		if l := req.ContentLength; l < 45 || l > 45+1 {
-			fmt.Fprintf(os.Stderr, "Request Content-Length (%d) != %d +/- 1/0\n", l, 45)
+		if l := req.ContentLength; l < 44 || l > 44+1 {
+			fmt.Fprintf(os.Stderr, "Request Content-Length (%d) != %d +/- 1/0\n", l, 44)
 			res.StatusCode = http.StatusBadRequest
 			break
 		}
 
 		// read body
-		r := base64.NewDecoder(base64.StdEncoding, io.LimitReader(req.Body, 45))
+		r := base64.NewDecoder(base64.StdEncoding, io.LimitReader(req.Body, 44))
 
 		var key Key
 		_, err := io.ReadFull(r, key[:])
@@ -455,7 +470,7 @@ func handle(conn net.Conn) {
 
 		metrics, ages := Analyze(links, tcpmetrics)
 		branch := Branch{
-			ID:            string(PublicWireguardKey),
+			ID:            PublicWireguardKey.String(),
 			Name:          hostname,
 			NetworkStatus: "degraded",
 			Metrics:       metrics,
@@ -520,7 +535,7 @@ failure:
 var (
 	Home               fs.FS
 	PublicSSHKeys      string
-	PublicWireguardKey string
+	PublicWireguardKey Key
 )
 
 func controller() error {
@@ -529,31 +544,6 @@ func controller() error {
 	}
 
 	switch os.Args[1] {
-	case "address":
-		if len(os.Args) <= 2 {
-			return fmt.Errorf("not enough arguments")
-		}
-		ip, network, err := net.ParseCIDR(os.Args[2])
-		if err != nil {
-			return fmt.Errorf("error parsing address: %+v", err)
-		}
-
-		i := strings.Index(network.String(), "/")
-		if i == -1 {
-			return fmt.Errorf("/ not found in generated IP address string")
-		}
-
-		address := fmt.Sprintf("%s\n", ip.String())
-		mask := fmt.Sprintf("%s\n", network.String()[i+1:])
-
-		err = os.WriteFile("address", []byte(address), 0644)
-		if err != nil {
-			return fmt.Errorf("failed writing address file: %+v", err)
-		}
-		err = os.WriteFile("mask", []byte(mask), 0644)
-		if err != nil {
-			return fmt.Errorf("failed writing mask file: %+v", err)
-		}
 	case "peer":
 		if len(os.Args) <= 2 {
 			return fmt.Errorf("not enough arguments")
@@ -591,7 +581,7 @@ func controller() error {
 		}
 
 		wireguard = bytes.TrimSpace(wireguard)
-		dir := fmt.Sprintf("peers/%s", strings.Replace(string(wireguard), "/", "-", -1))
+		dir := filepath.Join("peers", strings.Replace(string(wireguard), "/", "-", -1))
 		err = os.Mkdir(dir, 0755)
 		if err != nil {
 			return fmt.Errorf("reading response body: %+v", err)
@@ -604,7 +594,7 @@ func controller() error {
 			host = host[:i]
 		}
 		host = fmt.Sprintf("%s\n", host)
-		err = os.WriteFile(fmt.Sprintf("%s/host", dir), []byte(host), 0555)
+		err = os.WriteFile(fmt.Sprintf("%s/address", dir), []byte(host), 0555)
 		if err != nil {
 			return fmt.Errorf("failed writing host '%s' to file: %+v", url.Host, err)
 		}
@@ -615,24 +605,41 @@ func controller() error {
 		}
 
 		fmt.Fprintf(os.Stderr, "got public keys - wg: %s, ssh: %s\n", string(wireguard), string(ssh))
-		err = initVPN()
+
+		peers, err := GetPeers()
 		if err != nil {
-			return err
+			return fmt.Errorf("failed getting peers: %+v\n", err)
+		}
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		r, w := io.Pipe()
+		ch := make(chan Key)
+
+		go func() {
+			defer close(ch)
+			for key := range peers {
+				select {
+				case ch <- key:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+
+		go func() {
+			WritePeerConfiguration(w, PublicWireguardKey, ch)
+			w.Close()
+		}()
+		if err = Shell(ctx, r); err != nil {
+			return fmt.Errorf("failed writing network peer configuration to shell: %+v\n", err)
 		}
 	default:
 		return fmt.Errorf("unknown option: %s", os.Args[1])
 	}
 
 	return nil
-}
-
-func initVPN() error {
-	cmd := exec.Command(".local/bin/init.sh")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		err = fmt.Errorf("error from init.sh: %+v - output: %s", err, string(output))
-	}
-	return err
 }
 
 func Listen(ctx context.Context, ch chan net.Conn, listener net.Listener) {
@@ -778,7 +785,7 @@ type Peer interface {
 
 type peerFS struct {
 	address string
-	branch Branch
+	branch  Branch
 }
 
 func (p *peerFS) URL() *url.URL {
@@ -808,8 +815,9 @@ func GetPeers() (map[Key]Peer, error) {
 	}
 
 	for _, entry := range entries {
-		var k Key
-		_, err := k.UnmarshalText([]byte(entry.Name()))
+		k := new(Key)
+		text := strings.Replace(entry.Name(), "-", "/", -1)
+		_, err := k.UnmarshalText([]byte(text))
 		if err != nil {
 			return peers, fmt.Errorf("failed to parse key '%s': %+v\n", entry.Name(), err)
 		}
@@ -818,12 +826,54 @@ func GetPeers() (map[Key]Peer, error) {
 		if err != nil {
 			return peers, fmt.Errorf("failed to read address for peer '%s': %+v\n", entry.Name(), err)
 		}
-		peers[k] = &peerFS{
+		peers[*k] = &peerFS{
 			address: string(address),
 		}
+		fmt.Fprintf(os.Stderr, "read peer: %s, %s\n", k.String(), string(address))
 	}
 
 	return peers, nil
+}
+
+func Shell(ctx context.Context, r io.Reader) error {
+	cmd := exec.CommandContext(ctx, "/bin/sh", "-e")
+	w, err := cmd.StdinPipe()
+	if err != nil {
+		//os.Fprintf(os.Stderr, "failed to create shell pipe: %+v\n", err)
+		//os.Exit(1)
+		return err
+	}
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	err = cmd.Start()
+	if err != nil {
+		//os.Fprintf(os.Stderr, "failed to start shell: %+v\n", err)
+		//os.Exit(1)
+		return err
+	}
+	_, e1 := io.Copy(w, io.TeeReader(r, os.Stderr))
+	w.Close()
+	e2 := cmd.Wait()
+	if e2 != nil {
+		return e2
+	}
+	return e1
+}
+
+func WritePeerConfiguration(w io.Writer, key Key, peers chan Key) (n int, e error) {
+	for key := range peers {
+		ours, theirs := GenerateLinkLocal(PublicWireguardKey, key)
+		remote := key.GlobalAddress()
+		n, e = fmt.Fprintf(w, "sudo ip address replace dev avaron %s\n", ours.String())
+		if e != nil {
+			return
+		}
+		n, e = fmt.Fprintf(w, "sudo ip route replace %s via %s dev avaron\n", remote.String(), theirs.IP.String())
+		if e != nil {
+			return
+		}
+	}
+	return
 }
 
 func main() {
@@ -936,36 +986,77 @@ func main() {
 		fmt.Fprintf(os.Stderr, "failed to find/read public SSH key files\n")
 		os.Exit(1)
 	}
+
 	fmt.Fprintf(os.Stderr, "%s\n", PublicSSHKeys)
+
+	fmt.Fprintf(os.Stderr, "getting wireguard public key...\n")
 
 	// reading wireguard public key
 	cmd := exec.Command("/bin/sh", "-c", "/bin/wg pubkey < wireguard/private")
 	if out, err := cmd.Output(); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to start wireguard for public-key derivation: %+v\n", err)
 		os.Exit(1)
-	} else {
-		PublicWireguardKey = string(out)
-	}
-
-	err = exec.Command("/bin/sh", "-c", "ip link del dev avaron||:").Run()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error removing prior interface: %+v\n", err)
+	} else if _, err = PublicWireguardKey.UnmarshalText(out); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to parse wireguard key: %+v\n", err)
 		os.Exit(1)
 	}
 
 	ctx := context.Background()
-	Serve(ctx)
+	go Serve(ctx)
 
 	type Value struct{}
 
 	updates := make(chan Branch)
 	client := http.DefaultClient
 
+	links, err := network.List(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to probe network links: %+v\n", err)
+		os.Exit(1)
+	}
+
 	peers, err := GetPeers()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed getting peers: %+v\n", err)
 		os.Exit(1)
 	}
+
+	{
+		ctx, cancel := context.WithCancel(context.Background())
+		r, w := io.Pipe()
+		ch := make(chan Key)
+		go func() {
+			defer close(ch)
+			for key := range peers {
+				select {
+				case ch <- key:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+		go func() {
+			if _, ok := links["avaron"]; !ok {
+				fmt.Fprintf(w, "sudo ip link add dev avaron type wireguard\n")
+			}
+
+			local := PublicWireguardKey.GlobalAddress()
+			fmt.Fprintf(w, "sudo ip address replace dev avaron %s\n", local.String())
+			fmt.Fprintf(w, "sudo wg set avaron listen-port %d private-key %s\n", 51820, "wireguard/private")
+			fmt.Fprintf(w, "sudo ip link set up dev avaron\n")
+			WritePeerConfiguration(w, PublicWireguardKey, ch)
+			w.Close()
+		}()
+		err = Shell(ctx, r)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed writing network configuration to shell: %+v\n", err)
+			os.Exit(1)
+		}
+		cancel()
+
+	}
+
+	fmt.Fprintf(os.Stderr, "iterating over %d peers\n", len(peers))
 
 	for key, peer := range peers {
 		fetch := func() error {
