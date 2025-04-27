@@ -249,14 +249,20 @@ func (r *Route) IPNet() *net.IPNet {
 	if dst == "default" {
 		dst = "0.0.0.0/0"
 	}
-	_, n, _ := net.ParseCIDR(dst)
+	_, n, err := net.ParseCIDR(dst)
+	if err != nil {
+		return &net.IPNet{}
+	}
 	return n
 }
 
 func (a *AddrInfo) IPNet() *net.IPNet {
 	str := fmt.Sprintf("%s/%d", a.Local, a.PrefixLen)
 	fmt.Println(str)
-	_, n, _ := net.ParseCIDR(str)
+	_, n, err := net.ParseCIDR(str)
+	if err != nil {
+		return &net.IPNet{}
+	}
 	return n
 }
 

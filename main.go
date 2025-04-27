@@ -358,7 +358,7 @@ func GetBranch() (Branch, error) {
 		Metrics:       metrics,
 	}
 
-	if len(connections) > 1 {
+	if len(connections) > 0 {
 		c := AsConnection(connections[0])
 		c.Uptime = int64(ages[connections[0].IfName])
 		branch.PrimaryConnection = c
@@ -369,7 +369,7 @@ func GetBranch() (Branch, error) {
 		branch.NetworkStatus = c.Status
 	}
 
-	if len(connections) > 2 {
+	if len(connections) > 1 {
 		c := AsConnection(connections[1])
 		c.Uptime = int64(ages[connections[1].IfName])
 		branch.FailoverConnection1 = c
@@ -1159,12 +1159,13 @@ func main() {
 				StatusCode: http.StatusOK,
 			}
 
-			branches := make([]Branch, 1, len(peers))
+			var branches []Branch
 
-			if branches[0], err = GetBranch(); err != nil {
+			if branch, err := GetBranch(); err != nil {
 				res.StatusCode = http.StatusInternalServerError
 				err = fmt.Errorf("failed to get local branch: %+v", err)
 			} else {
+				branches = append(branches, branch)
 				for _, peer := range peers {
 					fmt.Printf("adding branch: %+v", *peer.Branch())
 					branches = append(branches, *peer.Branch())
