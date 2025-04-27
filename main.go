@@ -310,6 +310,74 @@ type IPer interface {
   },
 */
 
+func GetBranch() (Branch, error) {
+	hostname, err := os.Hostname()
+	if err != nil {
+		return Branch{}, fmt.Errorf("failed to query OS hostname: %+v", err)
+	}
+
+	links, err := network.List(context.Background())
+	if err != nil {
+		return Branch{}, fmt.Errorf("failed to query network links: %+v", err)
+	}
+
+	routes, err := network.Routes(context.Background())
+	if err != nil {
+		return Branch{}, fmt.Errorf("failed to query routes: %+v", err)
+	}
+
+	sort.Sort(network.RouteMask(routes))
+	var connections []*network.Interface
+	{
+		m := make(map[string]struct{})
+		for _, r := range routes {
+			_, ok := m[r.Device]
+			if ok {
+				continue
+			}
+			link, ok := links[r.Device]
+			if !ok {
+				fmt.Fprintf(os.Stderr, "warning - failed to find link %s given device name from routing table", r.Device)
+				continue
+			}
+			m[r.Device] = struct{}{}
+			connections = append(connections, link)
+		}
+	}
+
+	tcpmetrics, err := network.Metrics(context.Background())
+	if err != nil {
+		return Branch{}, fmt.Errorf("failed to query network metrics: %+v", err)
+	}
+
+	metrics, ages := Analyze(links, tcpmetrics)
+	branch := Branch{
+		ID:            PublicWireguardKey.String(),
+		Name:          hostname,
+		NetworkStatus: "degraded",
+		Metrics:       metrics,
+	}
+
+	if len(connections) > 1 {
+		c := AsConnection(connections[0])
+		c.Uptime = int64(ages[connections[0].IfName])
+		branch.PrimaryConnection = c
+		if addrs := connections[0].AddrInfo; len(addrs) > 0 {
+			sort.Sort(network.AddressMask(addrs))
+			branch.IPAddress = addrs[0].Local
+		}
+		branch.NetworkStatus = c.Status
+	}
+
+	if len(connections) > 2 {
+		c := AsConnection(connections[1])
+		c.Uptime = int64(ages[connections[1].IfName])
+		branch.FailoverConnection1 = c
+	}
+
+	return branch, nil
+}
+
 func handle(conn net.Conn) {
 	var res = http.Response{
 		Proto:      "HTTP/1.1",
@@ -417,80 +485,11 @@ func handle(conn net.Conn) {
 			break
 		}
 
-		hostname, err := os.Hostname()
+		branch, err := GetBranch()
 		if err != nil {
 			res.StatusCode = http.StatusInternalServerError
-			err = fmt.Errorf("failed to query OS hostname: %+v", err)
-			fmt.Fprintf(os.Stderr, "error processing request: %+v", err)
+			err = fmt.Errorf("failed to get local branch: %+v", err)
 			break
-		}
-
-		links, err := network.List(context.Background())
-		if err != nil {
-			res.StatusCode = http.StatusInternalServerError
-			err = fmt.Errorf("failed to query network links: %+v", err)
-			fmt.Fprintf(os.Stderr, "error processing request: %+v", err)
-			break
-		}
-
-		routes, err := network.Routes(context.Background())
-		if err != nil {
-			res.StatusCode = http.StatusInternalServerError
-			err = fmt.Errorf("failed to query routes: %+v", err)
-			fmt.Fprintf(os.Stderr, "error processing request: %+v", err)
-			break
-		}
-
-		sort.Sort(network.RouteMask(routes))
-		var connections []*network.Interface
-		{
-			m := make(map[string]struct{})
-			for _, r := range routes {
-				_, ok := m[r.Device]
-				if ok {
-					continue
-				}
-				link, ok := links[r.Device]
-				if !ok {
-					fmt.Fprintf(os.Stderr, "warning - failed to find link %s given device name from routing table", r.Device)
-					continue
-				}
-				m[r.Device] = struct{}{}
-				connections = append(connections, link)
-			}
-		}
-
-		tcpmetrics, err := network.Metrics(context.Background())
-		if err != nil {
-			res.StatusCode = http.StatusInternalServerError
-			err = fmt.Errorf("failed to query network metrics: %+v", err)
-			fmt.Fprintf(os.Stderr, "error processing request: %+v", err)
-			break
-		}
-
-		metrics, ages := Analyze(links, tcpmetrics)
-		branch := Branch{
-			ID:            PublicWireguardKey.String(),
-			Name:          hostname,
-			NetworkStatus: "degraded",
-			Metrics:       metrics,
-		}
-
-		if len(connections) > 1 {
-			c := AsConnection(connections[0])
-			c.Uptime = int64(ages[connections[0].IfName])
-			branch.PrimaryConnection = c
-			if addrs := connections[0].AddrInfo; len(addrs) > 0 {
-				sort.Sort(network.AddressMask(addrs))
-				branch.IPAddress = addrs[0].Local
-			}
-			branch.NetworkStatus = c.Status
-		}
-
-		if len(connections) > 2 {
-			c := AsConnection(connections[1])
-			c.Uptime = int64(ages[connections[1].IfName])
-			branch.FailoverConnection1 = c
 		}
 
 		buf, err := json.Marshal([]Branch{branch})
@@ -519,6 +518,8 @@ func handle(conn net.Conn) {
 	}
 
 failure:
+
+	defer conn.Close()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error processing request: %+v", err)
 		return
@@ -795,11 +796,9 @@ type peerFS struct {
 }
 
 func (p *peerFS) URL() *url.URL {
-	var host string
-	host = fmt.Sprintf("%s", p.address)
 	return &url.URL{
 		Scheme:      "http",
-		Host:        host,
+		Host:        fmt.Sprintf("%s:8080", p.address),
 		Path:        "/sdwan",
 		Fragment:    "",
 		RawFragment: "",
@@ -892,6 +891,11 @@ func WritePeerConfiguration(w io.Writer, key *Key, peers chan Peer) (n int, e er
 	}
 	return
 }
+
+var (
+	UpdatePeer = make(chan Branch)
+	RequestPeers = make(chan http.Response)
+)
 
 func main() {
 	if len(os.Args) < 1 {
@@ -1023,7 +1027,6 @@ func main() {
 
 	type Value struct{}
 
-	updates := make(chan Branch)
 	client := http.DefaultClient
 
 	links, err := network.List(ctx)
@@ -1103,7 +1106,7 @@ func main() {
 					return err
 				}
 				select {
-				case updates <- branch:
+				case UpdatePeer <- branch:
 				case <-ctx.Done():
 					return nil
 				}
@@ -1134,7 +1137,7 @@ func main() {
 
 	for {
 		select {
-		case branch := <-updates:
+		case branch := <-UpdatePeer:
 			var k Key
 			_, err := k.UnmarshalText([]byte(branch.ID))
 			if err != nil {
