@@ -43,9 +43,9 @@ func (k *Key) UnmarshalText(buf []byte) (int64, error) {
 		return 0, io.ErrShortBuffer
 	}
 
-	fmt.Fprintf(os.Stderr, "decoding buf: %s\n", buf[:])
-	n, err := base64.StdEncoding.Decode(k[:], buf[:])
-	return int64(n), err
+	fmt.Fprintf(os.Stderr, "decoding buf: '%s'\n", buf[:])
+	_, err := base64.StdEncoding.Decode(k[:], bytes.TrimSpace(buf[:]))
+	return int64(len(buf)), err
 }
 
 func (k Key) MarshalText() ([]byte, error) {
@@ -485,21 +485,12 @@ func handle(ctx context.Context, conn net.Conn) {
 			break
 		}
 
-		branch, err := GetBranch()
-		if err != nil {
-			res.StatusCode = http.StatusInternalServerError
-			err = fmt.Errorf("failed to get local branch: %+v", err)
-			break
+		select{
+		case <-ctx.Done():
+		case RequestPeers<-conn:
 		}
 
-		buf, err := json.Marshal([]Branch{branch})
-		if err != nil {
-			res.StatusCode = http.StatusInternalServerError
-			err = fmt.Errorf("failed to marshal: %+v", err)
-			break
-		}
-		fmt.Fprintf(os.Stderr, "writing: %s\n", string(buf))
-		res.Body = io.NopCloser(bytes.NewReader(buf))
+		return
 	default:
 		if req.Method != "GET" {
 			res.StatusCode = http.StatusNotFound
@@ -773,7 +764,6 @@ func Serve(ctx context.Context) {
 				return
 			}
 			handle(deadline, conn)
-			conn.Close()
 			select {
 			case tokens <- struct{}{}:
 				// return token
@@ -798,7 +788,7 @@ type peerFS struct {
 func (p *peerFS) URL() *url.URL {
 	return &url.URL{
 		Scheme:      "http",
-		Host:        fmt.Sprintf("%s:8080", p.address),
+		Host:        fmt.Sprintf("%s", p.address),
 		Path:        "/sdwan",
 		Fragment:    "",
 		RawFragment: "",
@@ -839,6 +829,9 @@ func GetPeers() (map[Key]Peer, error) {
 		peers[*k] = &peerFS{
 			address: string(bytes.TrimSpace(address)),
 			key:     *k,
+			branch: Branch{
+				ID: k.String(),
+			},
 		}
 		fmt.Fprintf(os.Stderr, "read peer: %s, %s\n", k.String(), string(address))
 	}
@@ -894,7 +887,7 @@ func WritePeerConfiguration(w io.Writer, key *Key, peers chan Peer) (n int, e er
 
 var (
 	UpdatePeer = make(chan Branch)
-	RequestPeers = make(chan http.Response)
+	RequestPeers = make(chan net.Conn)
 )
 
 func main() {
@@ -1080,8 +1073,10 @@ func main() {
 
 	for key, peer := range peers {
 		fetch := func() error {
+			url := peer.URL()
+			url.Host = url.Host + ":8080"
 			req := &http.Request{
-				URL:        peer.URL(),
+				URL:        url,
 				Proto:      "HTTP/1.1",
 				ProtoMajor: 1,
 				ProtoMinor: 0,
@@ -1144,6 +1139,39 @@ func main() {
 				panic(err)
 			}
 			*peers[k].Branch() = branch
+		case conn := <-RequestPeers:
+
+			var res = http.Response{
+				Proto:      "HTTP/1.1",
+				ProtoMajor: 1,
+				ProtoMinor: 1,
+				StatusCode: http.StatusOK,
+			}
+
+			branches := make([]Branch, 1, len(peers))
+
+			if branches[0], err = GetBranch(); err != nil {
+				res.StatusCode = http.StatusInternalServerError
+				err = fmt.Errorf("failed to get local branch: %+v", err)
+			} else {
+				if buf, err := json.Marshal(branches); err != nil  {
+					res.StatusCode = http.StatusInternalServerError
+					err = fmt.Errorf("failed to marshal: %+v", err)
+				} else {
+					for _, peer := range peers {
+						branches = append(branches, *peer.Branch())
+					}
+					res.Body = io.NopCloser(bytes.NewReader(buf))
+				}
+			}
+
+			go func() {
+				if err = res.Write(conn); err != nil {
+					fmt.Fprintf(os.Stderr, "error writing request: %+v", err)
+				}
+				conn.Close()
+			}()
+
 		case <-ctx.Done():
 			return
 		}
