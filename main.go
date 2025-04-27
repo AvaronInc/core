@@ -983,7 +983,7 @@ func main() {
 
 	info, err := whois.Get()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to get coordinates\n", err)
+		fmt.Fprintf(os.Stderr, "failed to get coordinates: %+v\n", err)
 	}
 
 	MyLocation = Location{
