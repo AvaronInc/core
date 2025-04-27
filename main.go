@@ -775,9 +775,9 @@ func Serve(ctx context.Context) {
 }
 
 type Peer interface {
-	URL() *url.URL
 	Branch() *Branch
 	Key() *Key
+	IP() string
 }
 
 type peerFS struct {
@@ -786,14 +786,8 @@ type peerFS struct {
 	key     Key
 }
 
-func (p *peerFS) URL() *url.URL {
-	return &url.URL{
-		Scheme:      "http",
-		Host:        fmt.Sprintf("%s", p.address),
-		Path:        "/sdwan",
-		Fragment:    "",
-		RawFragment: "",
-	}
+func (p *peerFS) IP() string {
+	return p.address
 }
 
 func (p *peerFS) Branch() *Branch {
@@ -802,6 +796,55 @@ func (p *peerFS) Branch() *Branch {
 
 func (p *peerFS) Key() *Key {
 	return &p.key
+}
+
+func (k *Key) Sync(ctx context.Context, ch chan Branch) error {
+	addr := k.GlobalAddress()
+	host := fmt.Sprintf("%s:8080", addr.IP.String())
+	fmt.Printf("fetching branch updates from %+v\n", host)
+	req := &http.Request{
+		URL:        &url.URL{
+			Scheme:      "http",
+			Host:        host,
+			Path:        "/sdwan",
+			Fragment:    "",
+			RawFragment: "",
+		},
+		Proto:      "HTTP/1.1",
+		ProtoMajor: 1,
+		ProtoMinor: 1,
+	}
+
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+
+	dec := json.NewDecoder(res.Body)
+
+	if t, _ := dec.Token(); t != json.Delim('[') {
+		return fmt.Errorf("expected '[' as starting delimeter")
+	}
+
+	var branch Branch
+	for dec.More() {
+		err = dec.Decode(&branch)
+		if err != nil {
+			return err
+		}
+		select {
+		case ch <- branch:
+		case <-ctx.Done():
+			return nil
+		}
+	}
+
+	if t, _ := dec.Token(); t != json.Delim(']') {
+		return fmt.Errorf("expected ']' as starting delimeter")
+	}
+
+	return nil
 }
 
 func GetPeers() (map[Key]Peer, error) {
@@ -869,8 +912,7 @@ func WritePeerConfiguration(w io.Writer, key *Key, peers chan Peer) (n int, e er
 	for peer := range peers {
 		ours, theirs := GenerateLinkLocal(key, peer.Key())
 		remote := peer.Key().GlobalAddress()
-		n, e = fmt.Fprintf(w, "sudo wg set avaron peer %s endpoint %s:51820 allowed-ips ::/0\n", peer.Key().String(), peer.URL().Host)
-
+		n, e = fmt.Fprintf(w, "sudo wg set avaron peer %s endpoint %s:51820 allowed-ips ::/0\n", peer.Key().String(), peer.IP())
 		if e != nil {
 			return
 		}
@@ -1032,8 +1074,6 @@ func main() {
 
 	type Value struct{}
 
-	client := http.DefaultClient
-
 	links, err := network.List(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to probe network links: %+v\n", err)
@@ -1084,50 +1124,7 @@ func main() {
 	fmt.Fprintf(os.Stderr, "iterating over %d peers\n", len(peers))
 
 	for key, peer := range peers {
-		fetch := func() error {
-			url := peer.URL()
-			url.Host = url.Host + ":8080"
-			req := &http.Request{
-				URL:        url,
-				Proto:      "HTTP/1.1",
-				ProtoMajor: 1,
-				ProtoMinor: 0,
-			}
-			fmt.Printf("fetching %+v\n", url.Host)
-
-			res, err := client.Do(req)
-			if err != nil {
-				return err
-			}
-
-			defer res.Body.Close()
-			dec := json.NewDecoder(res.Body)
-
-			if t, _ := dec.Token(); t != json.Delim('[') {
-				return fmt.Errorf("expected '[' as starting delimeter")
-			}
-
-			var branch Branch
-			for dec.More() {
-				err = dec.Decode(&branch)
-				if err != nil {
-					return err
-				}
-				select {
-				case UpdatePeer <- branch:
-				case <-ctx.Done():
-					return nil
-				}
-			}
-
-			if t, _ := dec.Token(); t != json.Delim(']') {
-				return fmt.Errorf("expected ']' as starting delimeter")
-			}
-
-			return nil
-		}
-
-		go func(key Key) {
+		go func(key Key, peer Peer) {
 			ticker := time.NewTicker(time.Second * 5)
 			for {
 				select {
@@ -1135,12 +1132,12 @@ func main() {
 				case <-ctx.Done():
 					return
 				}
-				err := fetch()
+				err := peer.Key().Sync(ctx, UpdatePeer)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "error fething updates: %+v", err)
 				}
 			}
-		}(key)
+		}(key, peer)
 	}
 
 	for {
