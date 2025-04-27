@@ -7,6 +7,7 @@ elif [ "$id" = "" ] || [ "$id" -eq 0 ]; then
 	exit 1
 fi
 
+sudo ip link del dev avaron ||:
 ./configure &&
 	make &&
 	(sudo killall avaron||:) &&

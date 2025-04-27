@@ -485,9 +485,9 @@ func handle(ctx context.Context, conn net.Conn) {
 			break
 		}
 
-		select{
+		select {
 		case <-ctx.Done():
-		case RequestPeers<-conn:
+		case RequestPeers <- conn:
 		}
 
 		return
@@ -753,13 +753,11 @@ func Serve(ctx context.Context) {
 		fmt.Fprintf(os.Stderr, "duration: %20s\n", d)
 		t := time.Now().Add(d)
 		conn.SetDeadline(t)
-		deadline, cancel := context.WithDeadline(ctx, t)
+		deadline, _ := context.WithDeadline(ctx, t)
 		go func() {
-			defer cancel()
 			select {
 			case <-tokens:
 				// borrow token
-				cancel()
 			case <-deadline.Done():
 				return
 			}
@@ -886,7 +884,7 @@ func WritePeerConfiguration(w io.Writer, key *Key, peers chan Peer) (n int, e er
 }
 
 var (
-	UpdatePeer = make(chan Branch)
+	UpdatePeer   = make(chan Branch)
 	RequestPeers = make(chan net.Conn)
 )
 
@@ -1081,6 +1079,7 @@ func main() {
 				ProtoMajor: 1,
 				ProtoMinor: 0,
 			}
+			fmt.Printf("fetching %+v\n", url.Host)
 
 			res, err := client.Do(req)
 			if err != nil {
@@ -1133,13 +1132,25 @@ func main() {
 	for {
 		select {
 		case branch := <-UpdatePeer:
+			fmt.Printf("updating peers\n")
+
 			var k Key
 			_, err := k.UnmarshalText([]byte(branch.ID))
 			if err != nil {
 				panic(err)
 			}
-			*peers[k].Branch() = branch
+			if bytes.Equal(k[:], PublicWireguardKey[:]) {
+				continue
+			}
+			if peer, ok := peers[k]; !ok {
+				fmt.Fprintf(os.Stderr, "unfound peer: %s\n", k.String())
+				continue
+			} else {
+				*peer.Branch() = branch
+				peers[k] = peer
+			}
 		case conn := <-RequestPeers:
+			fmt.Printf("requesting peers\n")
 
 			var res = http.Response{
 				Proto:      "HTTP/1.1",
@@ -1154,23 +1165,24 @@ func main() {
 				res.StatusCode = http.StatusInternalServerError
 				err = fmt.Errorf("failed to get local branch: %+v", err)
 			} else {
-				if buf, err := json.Marshal(branches); err != nil  {
+				for _, peer := range peers {
+					fmt.Printf("adding branch: %+v", *peer.Branch())
+					branches = append(branches, *peer.Branch())
+				}
+				if buf, err := json.Marshal(branches); err != nil {
 					res.StatusCode = http.StatusInternalServerError
 					err = fmt.Errorf("failed to marshal: %+v", err)
 				} else {
-					for _, peer := range peers {
-						branches = append(branches, *peer.Branch())
-					}
 					res.Body = io.NopCloser(bytes.NewReader(buf))
 				}
 			}
 
-			go func() {
+			go func(conn net.Conn, res http.Response) {
 				if err = res.Write(conn); err != nil {
 					fmt.Fprintf(os.Stderr, "error writing request: %+v", err)
 				}
 				conn.Close()
-			}()
+			}(conn, res)
 
 		case <-ctx.Done():
 			return
