@@ -137,7 +137,6 @@ type LinkInfoData struct {
 	NfCallArptables         int     `json:"nf_call_arptables"`
 }
 
-// NetworkInterface represents the structure of the JSON data.
 type Ethtool struct {
 	//IfName                               string   `json:"ifname"`
 	SupportedPorts                       []string `json:"supported-ports"`
@@ -173,16 +172,15 @@ type Interface struct {
 	Netlink
 }
 
-// Route represents a network route as per the given JSON structure
 type Route struct {
 	Type        string   `json:"type"`
 	Destination string   `json:"dst"`
-	Gateway     string   `json:"gateway,omitempty"` // Use omitempty to omit if not present
+	Gateway     string   `json:"gateway,omitempty"`
 	Device      string   `json:"dev"`
 	Protocol    string   `json:"protocol"`
 	Scope       string   `json:"scope"`
 	Source      string   `json:"prefsrc"`
-	Metric      int      `json:"metric,omitempty"` // Use omitempty to omit if not present
+	Metric      int      `json:"metric,omitempty"`
 	Flags       []string `json:"flags"`
 }
 
@@ -258,7 +256,6 @@ func (r *Route) IPNet() *net.IPNet {
 
 func (a *AddrInfo) IPNet() *net.IPNet {
 	str := fmt.Sprintf("%s/%d", a.Local, a.PrefixLen)
-	fmt.Println(str)
 	_, n, err := net.ParseCIDR(str)
 	if err != nil {
 		return &net.IPNet{}
@@ -293,10 +290,8 @@ func (a AddressMask) Swap(i, j int) {
 }
 
 func (a AddressMask) Less(i, j int) bool {
-	//if !bytes.Equal(a[i].IPNet().Mask, a[j].IPNet().Mask) {
 	ib, il := a[i].IPNet().Mask.Size()
 	jb, jl := a[j].IPNet().Mask.Size()
-	fmt.Println("LENS", ib, il, jb, jl)
 
 	var b bool
 
@@ -307,8 +302,6 @@ func (a AddressMask) Less(i, j int) bool {
 		jb *= (il / jl)
 		b = true
 	}
-
-	fmt.Println("LENS", ib, jb)
 
 	if ib == jb {
 		return b
@@ -448,8 +441,6 @@ func List(ctx context.Context) (m map[string]*Interface, err error) {
 		return m, err
 	}
 
-	//addrs := make(map[string]*Interface)
-
 	dec := json.NewDecoder(stdout)
 	err = cmd.Start()
 	if err != nil {
@@ -460,7 +451,6 @@ func List(ctx context.Context) (m map[string]*Interface, err error) {
 		return m, fmt.Errorf("expected '[' as starting delimeter for `ip address show` output")
 	}
 
-	// Loop through the array elements
 	for dec.More() {
 		i := new(Interface)
 		err := dec.Decode(&i.Netlink)
@@ -481,7 +471,6 @@ func List(ctx context.Context) (m map[string]*Interface, err error) {
 		}
 	}
 
-	// Optional: Read the closing bracket
 	if t, _ := dec.Token(); t != json.Delim(']') {
 		return m, fmt.Errorf("expected ']' as closing delimeter")
 	}

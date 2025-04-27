@@ -939,21 +939,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	// portability hack
-	if len(os.Args) > 1 && os.Args[1] == "netmask" {
-		if len(os.Args) <= 2 {
-			fmt.Fprintf(os.Stderr, "netmask requires CIDR address\n")
-			os.Exit(1)
-		}
-		_, net, err := net.ParseCIDR(os.Args[2])
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed to parse CIDR: %+v\n", err)
-			os.Exit(1)
-		}
-		fmt.Fprintf(os.Stdout, "%s\n", net.String())
-		os.Exit(1)
-	}
-
 	base := filepath.Base(os.Args[0])
 	user, err := user.Lookup(base)
 	if err != nil {
@@ -1072,8 +1057,6 @@ func main() {
 	ctx := context.Background()
 	go Serve(ctx)
 
-	type Value struct{}
-
 	links, err := network.List(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to probe network links: %+v\n", err)
@@ -1144,22 +1127,22 @@ func main() {
 		select {
 		case branch := <-UpdatePeer:
 			fmt.Printf("updating peers\n")
-
 			var k Key
 			_, err := k.UnmarshalText([]byte(branch.ID))
 			if err != nil {
-				panic(err)
+				fmt.Fprintf(os.Stderr, "failed to parse peer ID: %s\n", branch.ID)
+				continue
 			}
 			if bytes.Equal(k[:], PublicWireguardKey[:]) {
 				continue
 			}
-			if peer, ok := peers[k]; !ok {
+
+			peer, ok := peers[k]
+			if !ok {
 				fmt.Fprintf(os.Stderr, "unfound peer: %s\n", k.String())
 				continue
-			} else {
-				*peer.Branch() = branch
-				peers[k] = peer
 			}
+			*peer.Branch() = branch
 		case conn := <-RequestPeers:
 			fmt.Printf("requesting peers\n")
 
