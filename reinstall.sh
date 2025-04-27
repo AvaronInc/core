@@ -7,7 +7,8 @@ elif [ "$id" = "" ] || [ "$id" -eq 0 ]; then
 	exit 1
 fi
 
-make &&
+./configure &&
+	make &&
 	(sudo killall avaron||:) &&
 	(sudo make uninstall||:) &&
 	sudo make install
