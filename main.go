@@ -378,7 +378,7 @@ func GetBranch() (Branch, error) {
 	return branch, nil
 }
 
-func handle(conn net.Conn) {
+func handle(ctx context.Context, conn net.Conn) {
 	var res = http.Response{
 		Proto:      "HTTP/1.1",
 		ProtoMajor: 1,
@@ -772,7 +772,7 @@ func Serve(ctx context.Context) {
 			case <-deadline.Done():
 				return
 			}
-			handle(conn)
+			handle(deadline, conn)
 			conn.Close()
 			select {
 			case tokens <- struct{}{}:
