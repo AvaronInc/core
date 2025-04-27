@@ -312,7 +312,7 @@ func (a AddressMask) Less(i, j int) bool {
 }
 
 func Metrics(ctx context.Context) (metrics []TCPMetric, err error) {
-	cmd := exec.CommandContext(ctx, "sudo", "/bin/ip", "-json", "-s", "-d", "tcpmetrics")
+	cmd := exec.CommandContext(ctx, "sudo", "/usr/sbin/ip", "-json", "-s", "-d", "tcpmetrics")
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return metrics, err
@@ -353,7 +353,7 @@ func Metrics(ctx context.Context) (metrics []TCPMetric, err error) {
 }
 
 func Routes(ctx context.Context) (routes []Route, err error) {
-	cmd := exec.CommandContext(ctx, "sudo", "/bin/ip", "-json", "-s", "-d", "route", "show")
+	cmd := exec.CommandContext(ctx, "sudo", "/usr/sbin/ip", "-json", "-s", "-d", "route", "show")
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return routes, err
@@ -395,7 +395,7 @@ func Routes(ctx context.Context) (routes []Route, err error) {
 }
 
 func runEthtool(ctx context.Context, dst *Ethtool, device string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "sudo", "/bin/ethtool", "--json", device)
+	cmd := exec.CommandContext(ctx, "sudo", "/usr/sbin/ethtool", "--json", device)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, err
@@ -434,7 +434,7 @@ fail:
 }
 
 func List(ctx context.Context) (m map[string]*Interface, err error) {
-	cmd := exec.CommandContext(ctx, "sudo", "/bin/ip", "-json", "-s", "-d", "address", "show")
+	cmd := exec.CommandContext(ctx, "sudo", "/usr/sbin/ip", "-json", "-s", "-d", "address", "show")
 	stdout, err := cmd.StdoutPipe()
 
 	m = make(map[string]*Interface)

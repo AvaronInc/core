@@ -23,7 +23,7 @@ install: build
 	useradd -m $(BIN) -s /bin/sh -r -G ssl
 
 	printf "%s ALL=(ALL) !ALL\n"                       "$(BIN)"  > "/etc/sudoers.d/$(BIN)"
-	printf "%s ALL=(ALL) NOPASSWD: /bin/ip, /bin/wg, /bin/ethtool\n" "$(BIN)" >> "/etc/sudoers.d/$(BIN)"
+	printf "%s ALL=(ALL) NOPASSWD: /usr/sbin/ip, /usr/bin/wg, /usr/sbin/ethtool, /usr/local/sbin/ethtool\n" "$(BIN)" >> "/etc/sudoers.d/$(BIN)"
 
 	su $(BIN) sh -c 'cd && yes "" | ssh-keygen && mkdir -p peers wireguard'
 	su $(BIN) sh -c 'cd ~/wireguard && touch private && chmod 600 private && chown $(BIN) private'

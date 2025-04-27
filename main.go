@@ -835,7 +835,7 @@ func GetPeers() (map[Key]Peer, error) {
 }
 
 func Shell(ctx context.Context, r io.Reader) error {
-	cmd := exec.CommandContext(ctx, "/bin/sh", "-e")
+	cmd := exec.CommandContext(ctx, "/usr/bin/sh", "-e")
 	w, err := cmd.StdinPipe()
 	if err != nil {
 		//os.Fprintf(os.Stderr, "failed to create shell pipe: %+v\n", err)
@@ -863,11 +863,11 @@ func WritePeerConfiguration(w io.Writer, key Key, peers chan Key) (n int, e erro
 	for key := range peers {
 		ours, theirs := GenerateLinkLocal(PublicWireguardKey, key)
 		remote := key.GlobalAddress()
-		n, e = fmt.Fprintf(w, "sudo ip address replace dev avaron %s\n", ours.String())
+		n, e = fmt.Fprintf(w, "sudo /usr/sbin/ip address replace dev avaron %s\n", ours.String())
 		if e != nil {
 			return
 		}
-		n, e = fmt.Fprintf(w, "sudo ip route replace %s via %s dev avaron\n", remote.String(), theirs.IP.String())
+		n, e = fmt.Fprintf(w, "sudo /usr/sbin/ip route replace %s via %s dev avaron\n", remote.String(), theirs.IP.String())
 		if e != nil {
 			return
 		}
@@ -991,7 +991,7 @@ func main() {
 	fmt.Fprintf(os.Stderr, "getting wireguard public key...\n")
 
 	// reading wireguard public key
-	cmd := exec.Command("/bin/sh", "-c", "/bin/wg pubkey < wireguard/private")
+	cmd := exec.Command("/usr/bin/sh", "-c", "/usr/bin/wg pubkey < wireguard/private")
 	if out, err := cmd.Output(); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to start wireguard for public-key derivation: %+v\n", err)
 		os.Exit(1)
@@ -1036,13 +1036,13 @@ func main() {
 		}()
 		go func() {
 			if _, ok := links["avaron"]; !ok {
-				fmt.Fprintf(w, "sudo ip link add dev avaron type wireguard\n")
+				fmt.Fprintf(w, "sudo /usr/sbin/ip link add dev avaron type wireguard\n")
 			}
 
 			local := PublicWireguardKey.GlobalAddress()
-			fmt.Fprintf(w, "sudo ip address replace dev avaron %s\n", local.String())
-			fmt.Fprintf(w, "sudo wg set avaron listen-port %d private-key %s\n", 51820, "wireguard/private")
-			fmt.Fprintf(w, "sudo ip link set up dev avaron\n")
+			fmt.Fprintf(w, "sudo /usr/sbin/ip address replace dev avaron %s\n", local.String())
+			fmt.Fprintf(w, "sudo /usr/bin/wg set avaron listen-port %d private-key %s\n", 51820, "wireguard/private")
+			fmt.Fprintf(w, "sudo /usr/sbin/ip link set up dev avaron\n")
 			WritePeerConfiguration(w, PublicWireguardKey, ch)
 			w.Close()
 		}()
