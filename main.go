@@ -606,7 +606,7 @@ func controller() error {
 
 		fmt.Fprintf(os.Stderr, "got public keys - wg: %s, ssh: %s\n", key.String(), string(ssh))
 
-		peers, err := GetPeers()
+		peers, err := GetPeerInfo()
 		if err != nil {
 			return fmt.Errorf("failed getting peers: %+v\n", err)
 		}
@@ -615,21 +615,8 @@ func controller() error {
 		defer cancel()
 
 		r, w := io.Pipe()
-		ch := make(chan Peer)
-
 		go func() {
-			defer close(ch)
-			for _, peer := range peers {
-				select {
-				case ch <- peer:
-				case <-ctx.Done():
-					return
-				}
-			}
-		}()
-
-		go func() {
-			WritePeerConfiguration(w, &PublicWireguardKey, ch)
+			WritePeerConfiguration(w, &PublicWireguardKey, peers)
 			w.Close()
 		}()
 		if err = Shell(ctx, r); err != nil {
@@ -774,28 +761,16 @@ func Serve(ctx context.Context) {
 	}
 }
 
-type Peer interface {
-	Branch() *Branch
-	Key() *Key
+type PeerInfo interface {
 	IP() string
 }
 
-type peerFS struct {
+type PeerFSEntry struct {
 	address string
-	branch  Branch
-	key     Key
 }
 
-func (p *peerFS) IP() string {
+func (p *PeerFSEntry) IP() string {
 	return p.address
-}
-
-func (p *peerFS) Branch() *Branch {
-	return &p.branch
-}
-
-func (p *peerFS) Key() *Key {
-	return &p.key
 }
 
 func (k *Key) Sync(ctx context.Context, ch chan Branch) error {
@@ -803,7 +778,7 @@ func (k *Key) Sync(ctx context.Context, ch chan Branch) error {
 	host := fmt.Sprintf("%s:8080", addr.IP.String())
 	fmt.Printf("fetching branch updates from %+v\n", host)
 	req := &http.Request{
-		URL:        &url.URL{
+		URL: &url.URL{
 			Scheme:      "http",
 			Host:        host,
 			Path:        "/sdwan",
@@ -847,10 +822,10 @@ func (k *Key) Sync(ctx context.Context, ch chan Branch) error {
 	return nil
 }
 
-func GetPeers() (map[Key]Peer, error) {
+func GetPeerInfo() (map[Key]PeerInfo, error) {
 	entries, err := os.ReadDir("peers")
 
-	peers := make(map[Key]Peer, len(entries))
+	peers := make(map[Key]PeerInfo, len(entries))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to read peers directory: %+v\n", err)
 		// this is fine
@@ -870,12 +845,8 @@ func GetPeers() (map[Key]Peer, error) {
 		if err != nil {
 			return peers, fmt.Errorf("failed to read address for peer '%s': %+v\n", entry.Name(), err)
 		}
-		peers[*k] = &peerFS{
+		peers[*k] = &PeerFSEntry{
 			address: string(bytes.TrimSpace(address)),
-			key:     *k,
-			branch: Branch{
-				ID: k.String(),
-			},
 		}
 		fmt.Fprintf(os.Stderr, "read peer: %s, %s\n", k.String(), string(address))
 	}
@@ -908,11 +879,11 @@ func Shell(ctx context.Context, r io.Reader) error {
 	return e1
 }
 
-func WritePeerConfiguration(w io.Writer, key *Key, peers chan Peer) (n int, e error) {
-	for peer := range peers {
-		ours, theirs := GenerateLinkLocal(key, peer.Key())
-		remote := peer.Key().GlobalAddress()
-		n, e = fmt.Fprintf(w, "sudo wg set avaron peer %s endpoint %s:51820 allowed-ips ::/0\n", peer.Key().String(), peer.IP())
+func WritePeerConfiguration(w io.Writer, us *Key, peers map[Key]PeerInfo) (n int, e error) {
+	for key, peer := range peers {
+		ours, theirs := GenerateLinkLocal(us, &key)
+		remote := key.GlobalAddress()
+		n, e = fmt.Fprintf(w, "sudo wg set avaron peer %s endpoint %s:51820 allowed-ips ::/0\n", key, peer.IP())
 		if e != nil {
 			return
 		}
@@ -1063,7 +1034,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	peers, err := GetPeers()
+	peers, err := GetPeerInfo()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed getting peers: %+v\n", err)
 		os.Exit(1)
@@ -1072,17 +1043,6 @@ func main() {
 	{
 		ctx, cancel := context.WithCancel(context.Background())
 		r, w := io.Pipe()
-		ch := make(chan Peer)
-		go func() {
-			defer close(ch)
-			for _, peer := range peers {
-				select {
-				case ch <- peer:
-				case <-ctx.Done():
-					return
-				}
-			}
-		}()
 		go func() {
 			if _, ok := links["avaron"]; !ok {
 				fmt.Fprintf(w, "sudo /usr/sbin/ip link add dev avaron type wireguard\n")
@@ -1092,7 +1052,7 @@ func main() {
 			fmt.Fprintf(w, "sudo /usr/sbin/ip address replace dev avaron %s\n", local.String())
 			fmt.Fprintf(w, "sudo /usr/bin/wg set avaron listen-port %d private-key %s\n", 51820, "wireguard/private")
 			fmt.Fprintf(w, "sudo /usr/sbin/ip link set up dev avaron\n")
-			WritePeerConfiguration(w, &PublicWireguardKey, ch)
+			WritePeerConfiguration(w, &PublicWireguardKey, peers)
 			w.Close()
 		}()
 		err = Shell(ctx, r)
@@ -1106,8 +1066,8 @@ func main() {
 
 	fmt.Fprintf(os.Stderr, "iterating over %d peers\n", len(peers))
 
-	for key, peer := range peers {
-		go func(key Key, peer Peer) {
+	for key := range peers {
+		go func(key Key) {
 			ticker := time.NewTicker(time.Second * 5)
 			for {
 				select {
@@ -1115,36 +1075,38 @@ func main() {
 				case <-ctx.Done():
 					return
 				}
-				err := peer.Key().Sync(ctx, UpdatePeer)
+				err := key.Sync(ctx, UpdatePeer)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "error fething updates: %+v", err)
 				}
 			}
-		}(key, peer)
+		}(key)
 	}
 
+	branches := make(map[Key]*Branch)
 	for {
 		select {
 		case branch := <-UpdatePeer:
-			fmt.Printf("updating peers\n")
+			fmt.Printf("updating branches\n")
 			var k Key
 			_, err := k.UnmarshalText([]byte(branch.ID))
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "failed to parse peer ID: %s\n", branch.ID)
 				continue
 			}
+
 			if bytes.Equal(k[:], PublicWireguardKey[:]) {
 				continue
 			}
 
-			peer, ok := peers[k]
+			bp, ok := branches[k]
 			if !ok {
 				fmt.Fprintf(os.Stderr, "unfound peer: %s\n", k.String())
 				continue
 			}
-			*peer.Branch() = branch
+			*bp = branch
 		case conn := <-RequestPeers:
-			fmt.Printf("requesting peers\n")
+			fmt.Printf("requesting branches\n")
 
 			var res = http.Response{
 				Proto:      "HTTP/1.1",
@@ -1153,18 +1115,18 @@ func main() {
 				StatusCode: http.StatusOK,
 			}
 
-			var branches []Branch
+			var slice []Branch
 
 			if branch, err := GetBranch(); err != nil {
 				res.StatusCode = http.StatusInternalServerError
 				err = fmt.Errorf("failed to get local branch: %+v", err)
 			} else {
-				branches = append(branches, branch)
-				for _, peer := range peers {
-					fmt.Printf("adding branch: %+v", *peer.Branch())
-					branches = append(branches, *peer.Branch())
+				slice = append(slice, branch)
+				for _, branch := range branches {
+					fmt.Printf("adding branch: %+v", branch)
+					slice = append(slice, *branch)
 				}
-				if buf, err := json.Marshal(branches); err != nil {
+				if buf, err := json.Marshal(slice); err != nil {
 					res.StatusCode = http.StatusInternalServerError
 					err = fmt.Errorf("failed to marshal: %+v", err)
 				} else {
