@@ -392,28 +392,28 @@ func handle(ctx context.Context, conn net.Conn) {
 	req, err := http.ReadRequest(reader)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error reading request: %+v\n", err)
-		goto failure
+		goto end
 	} else {
 		res.Request = req
 	}
 
-	fmt.Fprintf(os.Stderr, "%s: %s\n", req.Method, req.URL.Path)
+	fmt.Fprintf(os.Stderr, "%50s %5s: %s\n", conn.RemoteAddr().String(), req.Method, req.URL.Path)
 
 	switch req.URL.Path {
-	case "/keys/ssh":
+	case "/api/keys/ssh":
 		if req.Method != "GET" {
 			res.StatusCode = http.StatusMethodNotAllowed
 			break
 		}
 		res.Body = io.NopCloser(strings.NewReader(PublicSSHKeys))
-	case "/keys/wireguard":
+	case "/api/keys/wireguard":
 		if req.Method != "GET" {
 			res.StatusCode = http.StatusMethodNotAllowed
 			break
 		}
 		buf, _ := PublicWireguardKey.MarshalText()
 		res.Body = io.NopCloser(bytes.NewReader(buf))
-	case "/link":
+	case "/api/link":
 		if req.Method != "POST" {
 			res.StatusCode = http.StatusMethodNotAllowed
 			break
@@ -480,8 +480,7 @@ func handle(ctx context.Context, conn net.Conn) {
 			res.StatusCode = http.StatusInternalServerError
 			break
 		}
-	case "/sdwan":
-		fmt.Fprintf(os.Stderr, "SDWAN\n")
+	case "/api/sdwan":
 		if req.Method != "GET" {
 			res.StatusCode = http.StatusMethodNotAllowed
 			break
@@ -505,12 +504,15 @@ func handle(ctx context.Context, conn net.Conn) {
 
 		path := filepath.Clean(req.URL.Path)
 		path = filepath.Join("/tmp/public/", path)
+		if _, err := os.Stat(path); err != nil {
+			path = "/tmp/public/"
+		}
 		fmt.Fprintf(os.Stderr, "serving file: %s\n", path)
 		http.ServeFile(rw, req, path)
 		res.Body = io.NopCloser(rw.Buffer)
 	}
 
-failure:
+end:
 
 	defer conn.Close()
 	if err != nil {
@@ -543,7 +545,7 @@ func controller() error {
 		if len(os.Args) <= 2 {
 			return fmt.Errorf("not enough arguments")
 		}
-		peer := fmt.Sprintf("http://%s/keys/wireguard", os.Args[2])
+		peer := fmt.Sprintf("http://%s/api/keys/wireguard", os.Args[2])
 		r1, err := http.Get(peer)
 		if err != nil {
 			return err
@@ -565,7 +567,7 @@ func controller() error {
 			return fmt.Errorf("failed to parse response as Wireguard Key: %+v", err)
 		}
 
-		peer = fmt.Sprintf("http://%s/keys/ssh", os.Args[2])
+		peer = fmt.Sprintf("http://%s/api/keys/ssh", os.Args[2])
 		r2, err := http.Get(peer)
 		if err != nil {
 			return err
@@ -781,13 +783,16 @@ func (k *Key) Sync(ctx context.Context, ch chan Branch) error {
 		URL: &url.URL{
 			Scheme:      "http",
 			Host:        host,
-			Path:        "/sdwan",
+			Path:        "/api/sdwan",
 			Fragment:    "",
 			RawFragment: "",
 		},
 		Proto:      "HTTP/1.1",
 		ProtoMajor: 1,
 		ProtoMinor: 1,
+		Header: map[string][]string{
+			"User-Agent": {"Avaron-Core"},
+		},
 	}
 
 	res, err := http.DefaultClient.Do(req)
