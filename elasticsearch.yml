@@ -12,7 +12,6 @@ xpack.security.transport.ssl:
   keystore.path: certs/transport.p12
   truststore.path: certs/transport.p12
 
-cluster.initial_master_nodes: ["localhost"]
 http.host: 0.0.0.0
 
 #cluster.name: my-application
