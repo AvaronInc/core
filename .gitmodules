@@ -1,0 +1,6 @@
+[submodule "contrib/ethtool"]
+	path = contrib/ethtool
+	url = git://git.kernel.org/pub/scm/network/ethtool/ethtool.git
+[submodule "contrib/arkime"]
+	path = contrib/arkime
+	url = https://github.com/arkime/arkime
