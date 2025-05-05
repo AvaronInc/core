@@ -59,3 +59,23 @@ func meminfo() (map[string]info, error) {
 	}
 	return m, nil
 }
+
+func GetTotal() (int64, error) {
+	m, err := meminfo()
+	if err != nil {
+		return 0, err
+	}
+	info, ok := m["MemTotal"]
+	if !ok {
+		return 0, fmt.Errorf("MemTotal missing from /proc/meminfo")
+	}
+	var total int64
+	switch info.unit {
+	case "kB":
+		total = info.value * 1000
+	default:
+		panic("unknown unit given by /proc/meminfo")
+	}
+
+	return total, nil
+}
