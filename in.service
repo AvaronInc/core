@@ -8,7 +8,7 @@ Restart=always
 RestartSec=1
 ExecStart=@PREFIX/bin/@BIN
 User=@BIN
-StandardOutput=journal+console
+StandardOutput=journal
 StandardError=inherit
 
 [Install]
