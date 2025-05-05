@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	systemd "github.com/coreos/go-systemd/v22/dbus"
 	"io"
 	"io/fs"
 	"math"
@@ -195,6 +196,127 @@ type Branch struct {
 	IPAddress           string     `json:"ipAddress"`
 	NetworkStatus       string     `json:"networkStatus"`
 	Metrics             Metrics    `json:"metrics"`
+}
+
+/* frontend
+{
+  id: 'vpp-1',
+  uuid: 'f8c3de3d-1d47-4f5a-b898-3f0d1c23a1d9',
+  name: 'VPP Firewall',
+  type: 'vpp',
+  description: 'Vector Packet Processing firewall service for SD-WAN',
+  status: 'running',
+  cpuUsage: randomResourceUsage(),
+  memoryUsage: randomResourceUsage(),
+  lastRestart: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(), // 3 days ago
+  health: 'ok',
+  uptime: '3d 2h 14m',
+  assignedResources: {
+    cpuCores: 2,
+    ram: 4096, // MB
+    networkInterfaces: ['eth0', 'eth1']
+  },
+  networkIO: {
+    received: 12458, // KB/s
+    transmitted: 9845 // KB/s
+  },
+  dependencies: ['vpp-route-policy', 'interface-manager'],
+  logEntries: generateLogEntries(20)
+},
+*/
+
+type AssignedResources struct {
+	CPUCores          int      `json:"cpuCores"`
+	RAM               int      `json:"ram"` // in MB
+	NetworkInterfaces []string `json:"networkInterfaces"`
+}
+
+type NetworkIO struct {
+	Received    int `json:"received"`    // in KB/s
+	Transmitted int `json:"transmitted"` // in KB/s
+}
+
+type LogEntry struct {
+	Timestamp time.Time `json:"timestamp"`
+	Message   string    `json:"message"`
+}
+
+type Service struct {
+	ID                string            `json:"id"`
+	UUID              string            `json:"uuid"`
+	Name              string            `json:"name"`
+	Type              string            `json:"type"`
+	Description       string            `json:"description"`
+	Status            string            `json:"status"`
+	CPUUsage          float64           `json:"cpuUsage"`
+	MemoryUsage       float64           `json:"memoryUsage"`
+	LastRestart       time.Time         `json:"lastRestart"`
+	Health            string            `json:"health"`
+	Uptime            string            `json:"uptime"`
+	AssignedResources AssignedResources `json:"assignedResources"`
+	NetworkIO         NetworkIO         `json:"networkIO"`
+	Dependencies      []string          `json:"dependencies"`
+	LogEntries        []LogEntry        `json:"logEntries"`
+}
+
+func ListServices(ctx context.Context, ch chan Service) (err error) {
+	defer close(ch)
+	var conn *systemd.Conn
+	conn, err = systemd.NewSystemConnectionContext(ctx)
+	if err != nil {
+		fmt.Printf("Failed to connect to systemd: %v\n", err)
+		return
+	}
+	defer conn.Close()
+
+	var units []systemd.UnitStatus
+	units, err = conn.ListUnitsContext(ctx)
+	if err != nil {
+		fmt.Printf("Failed to list units: %v\n", err)
+		return
+	}
+
+	for _, unit := range units {
+		if !strings.HasSuffix(unit.Name, "service") {
+			continue
+		}
+		var property *systemd.Property
+		var cpu, memory uint64
+		if unit.SubState != "running" {
+			cpu, memory = 0, 0
+			continue
+		} else {
+			if property, err = conn.GetServiceProperty(unit.Name, "MemoryCurrent"); err != nil {
+				fmt.Fprintf(os.Stderr, "error getting memory for service '%s': %+v\n", unit.Name, err)
+			} else {
+				memory = property.Value.Value().(uint64)
+			}
+
+			if property, err = conn.GetServiceProperty(unit.Name, "CPUUsageNSec"); err != nil {
+				fmt.Fprintf(os.Stderr, "error getting memory for service '%s': %+v\n", unit.Name, err)
+			} else {
+				cpu = property.Value.Value().(uint64)
+			}
+			fmt.Println(cpu, memory)
+		}
+
+		select {
+		case ch <- Service{
+			ID:          unit.Name,
+			UUID:        unit.Name,
+			Name:        unit.Name,
+			Type:        unit.JobType,
+			Description: unit.Description,
+			Status:      unit.SubState,
+			MemoryUsage: float64(memory),
+			CPUUsage:    float64(cpu),
+		}:
+		case <-ctx.Done():
+			return
+		}
+	}
+
+	return
 }
 
 func Analyze(links map[string]*network.Interface, metrics []network.TCPMetric) (total Metrics, oldest map[string]float64) {

@@ -1,7 +1,8 @@
 module avaron
 
-go 1.18
+go 1.17
 
 require (
-	golang.org/x/sys v0.10.0 // indirect
+	github.com/coreos/go-systemd/v22 v22.5.0 // indirect
+	github.com/godbus/dbus/v5 v5.0.4 // indirect
 )
