@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -281,6 +282,58 @@ func handle(ctx context.Context, conn net.Conn) {
 		}
 
 		return
+	case "/api/services":
+		if req.Method != "GET" {
+			res.StatusCode = http.StatusMethodNotAllowed
+			break
+		}
+
+		ctx, cancel := context.WithCancel(ctx)
+		ch := make(chan Service)
+		go func() {
+			if err := ListServices(ctx, ch); err != nil {
+				panic(err)
+			}
+		}()
+
+		var w io.WriteCloser
+
+		res.Body, w = io.Pipe()
+		go func() {
+			enc := json.NewEncoder(w)
+
+			err := func() (err error) {
+				if _, err = fmt.Fprintf(w, "["); err != nil {
+					return
+				}
+				i := 0
+				for service := range ch {
+					if i == 0 {
+						// ok
+					} else if _, err = fmt.Fprintf(w, ","); err != nil {
+						return
+					}
+
+					if err = enc.Encode(service); err != nil {
+						return
+					}
+					i += 1
+
+				}
+				if _, err = fmt.Fprintf(w, "]"); err != nil {
+					return
+				}
+				return
+			}()
+			if err != nil {
+				fmt.Fprintf(os.Stdout, "error encoding service: %+v\n", err)
+			}
+			cancel()
+			w.Close()
+		}()
+		res.Header = http.Header{
+			"Content-Type": []string{"application/json"},
+		}
 	default:
 		if req.Method != "GET" {
 			res.StatusCode = http.StatusNotFound
