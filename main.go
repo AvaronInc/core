@@ -1,7 +1,7 @@
 package main
 
 import (
-	network "avaron/net/linux"
+	network "avaron/net"
 	"avaron/whois"
 	"bytes"
 	"context"
