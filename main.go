@@ -2,6 +2,7 @@ package main
 
 import (
 	network "avaron/net"
+	"avaron/sys/mem"
 	"avaron/whois"
 	"bytes"
 	"context"
@@ -19,6 +20,7 @@ import (
 	"os/exec"
 	"os/user"
 	filepath "path"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -272,16 +274,27 @@ func ListServices(ctx context.Context, ch chan Service) (err error) {
 	var units []systemd.UnitStatus
 	units, err = conn.ListUnitsContext(ctx)
 	if err != nil {
-		fmt.Printf("Failed to list units: %v\n", err)
+		fmt.Fprintf(os.Stderr, "failed to list units: %v\n", err)
 		return
 	}
 
+	total, err := mem.GetTotal()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to find OS memory amount: %v\n", err)
+		return
+	}
 	for _, unit := range units {
-		if !strings.HasSuffix(unit.Name, "service") {
+		if !strings.HasSuffix(unit.Name, ".service") {
 			continue
 		}
-		var property *systemd.Property
-		var cpu, memory uint64
+		var (
+			property *systemd.Property
+			memory   uint64
+			cpu      time.Duration
+			uptime    time.Duration
+			start    time.Time
+		)
+
 		if unit.SubState != "running" {
 			cpu, memory = 0, 0
 			continue
@@ -295,21 +308,30 @@ func ListServices(ctx context.Context, ch chan Service) (err error) {
 			if property, err = conn.GetServiceProperty(unit.Name, "CPUUsageNSec"); err != nil {
 				fmt.Fprintf(os.Stderr, "error getting memory for service '%s': %+v\n", unit.Name, err)
 			} else {
-				cpu = property.Value.Value().(uint64)
+				cpu = time.Duration(property.Value.Value().(uint64)) * time.Nanosecond
 			}
-			fmt.Println(cpu, memory)
-		}
 
+			if property, err = conn.GetUnitProperty(unit.Name, "ActiveEnterTimestamp"); err != nil {
+				fmt.Fprintf(os.Stderr, "error getting memory for service '%s': %+v\n", unit.Name, err)
+				err = nil
+			} else {
+				start = time.UnixMicro(int64(property.Value.Value().(uint64)))
+				uptime = time.Now().Sub(start)
+			}
+		}
 		select {
 		case ch <- Service{
 			ID:          unit.Name,
 			UUID:        unit.Name,
-			Name:        unit.Name,
-			Type:        unit.JobType,
+			Name:        strings.TrimSuffix(unit.Name, ".service"),
+			Type:        "system",
+			Health:      "healthy",
 			Description: unit.Description,
 			Status:      unit.SubState,
-			MemoryUsage: float64(memory),
-			CPUUsage:    float64(cpu),
+			MemoryUsage: truncate(float64(memory)/float64(total)*100, 2),
+			CPUUsage:    truncate(float64(((cpu*time.Duration(runtime.NumCPU())/uptime)).Milliseconds()/10), 2),
+			Uptime: uptime.String(),
+			LastRestart: start,
 		}:
 		case <-ctx.Done():
 			return
