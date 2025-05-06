@@ -297,14 +297,16 @@ func ListServices(ctx context.Context, ch chan Service) (err error) {
 			cpu      time.Duration
 			uptime   time.Duration
 			start    time.Time
-			s = Service{
-				ID:          unit.Name,
-				UUID:        unit.Name,
-				Name:        unit.Name[:i],
-				Type:        unit.Name[i+1:],
-				Description: unit.Description,
-				Status:      unit.SubState,
-				Uptime:      uptime.String(),
+			s        = Service{
+				ID:           unit.Name,
+				UUID:         unit.Name,
+				Name:         unit.Name[:i],
+				Type:         unit.Name[i+1:],
+				Description:  unit.Description,
+				Status:       unit.SubState,
+				Uptime:       uptime.String(),
+				Dependencies: []string{},
+				LogEntries:   []LogEntry{},
 			}
 		)
 
