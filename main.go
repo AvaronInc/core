@@ -4,12 +4,14 @@ import (
 	network "avaron/net"
 	"avaron/sys/mem"
 	"avaron/whois"
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	systemd "github.com/coreos/go-systemd/v22/dbus"
+	journal "github.com/coreos/go-systemd/v22/sdjournal"
 	"io"
 	"io/fs"
 	"math"
@@ -271,10 +273,10 @@ func ListServices(ctx context.Context, ch chan Service) (err error) {
 	}
 	defer conn.Close()
 
-	var units []systemd.UnitStatus
-	units, err = conn.ListUnitsContext(ctx)
+	var files []systemd.UnitFile
+	files, err = conn.ListUnitFilesContext(ctx)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to list units: %v\n", err)
+		fmt.Fprintf(os.Stderr, "failed to list unit-files: %v\n", err)
 		return
 	}
 
@@ -283,10 +285,52 @@ func ListServices(ctx context.Context, ch chan Service) (err error) {
 		fmt.Fprintf(os.Stderr, "failed to find OS memory amount: %v\n", err)
 		return
 	}
-	for _, unit := range units {
-		if strings.HasPrefix(unit.Name, "systemd") {
+
+	paths := make([]string, 0, len(files))
+	m := make(map[string]struct{})
+	for i := range files {
+		path := filepath.Base(files[i].Path)
+		if strings.Index(path, "@.") >= 0 {
 			continue
 		}
+		if strings.Index(path, "systemd") >= 0 {
+			continue
+		}
+		if files[i].Type == "transient" {
+			continue
+		}
+		if _, ok := m[path]; ok {
+			continue // dedup
+		}
+		m[path] = struct{}{}
+		paths = append(paths, path)
+	}
+
+	var units []systemd.UnitStatus
+	units, err = conn.ListUnitsByNamesContext(ctx, paths)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to list units: %v\n", err)
+		return
+	}
+
+	var config = journal.JournalReaderConfig{
+		Matches: []journal.Match{
+			{
+				Field: "_SYSTEMD_UNIT",
+				Value: "",
+			},
+		},
+		NumFromTail: 15,
+	}
+
+	m = make(map[string]struct{})
+
+	for _, unit := range units {
+		if _, ok := m[unit.Name]; ok {
+			continue // dedup
+		}
+		m[unit.Name] = struct{}{}
+		fmt.Fprintf(os.Stderr, "%s\n", unit.Name)
 		i := strings.LastIndex(unit.Name, ".")
 		if i < 0 || i == len(unit.Name)-1 {
 			continue
@@ -354,6 +398,24 @@ func ListServices(ctx context.Context, ch chan Service) (err error) {
 			s.Health = "stopped"
 		}
 
+		config.Matches[0].Value = unit.Name
+		var j *journal.JournalReader
+		j, err = journal.NewJournalReader(config)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "journal initialization error for %s: %+v\n", unit.Name, err)
+		} else {
+			go func() {
+				time.Sleep(time.Millisecond*50) // HACK
+				j.Close()
+			}()
+			scanner := bufio.NewScanner(j)
+			for scanner.Scan() {
+				s.LogEntries = append(s.LogEntries, LogEntry{
+					Message:   scanner.Text(),
+					Timestamp: time.Now(), // HACK
+				})
+			}
+		}
 		select {
 		case ch <- s:
 		case <-ctx.Done():
