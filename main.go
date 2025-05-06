@@ -284,6 +284,10 @@ func ListServices(ctx context.Context, ch chan Service) (err error) {
 		return
 	}
 	for _, unit := range units {
+		i := strings.LastIndex(unit.Name, ".")
+		if i < 0 || i == len(unit.Name)-1 {
+			continue
+		}
 		if !strings.HasSuffix(unit.Name, ".service") {
 			continue
 		}
@@ -293,12 +297,24 @@ func ListServices(ctx context.Context, ch chan Service) (err error) {
 			cpu      time.Duration
 			uptime   time.Duration
 			start    time.Time
+			s = Service{
+				ID:          unit.Name,
+				UUID:        unit.Name,
+				Name:        unit.Name[:i],
+				Type:        unit.Name[i+1:],
+				Description: unit.Description,
+				Status:      unit.SubState,
+				Uptime:      uptime.String(),
+			}
 		)
 
-		if unit.SubState != "running" {
-			cpu, memory = 0, 0
+		if s.Type != "service" {
 			continue
-		} else {
+		}
+
+		switch unit.SubState {
+		case "running":
+			s.Health = "ok"
 			if property, err = conn.GetServiceProperty(unit.Name, "MemoryCurrent"); err != nil {
 				fmt.Fprintf(os.Stderr, "error getting memory for service '%s': %+v\n", unit.Name, err)
 			} else {
@@ -311,6 +327,12 @@ func ListServices(ctx context.Context, ch chan Service) (err error) {
 				cpu = time.Duration(property.Value.Value().(uint64)) * time.Nanosecond
 			}
 
+			if property, err = conn.GetUnitProperty(unit.Name, "Requires"); err != nil {
+				fmt.Fprintf(os.Stderr, "error getting memory for service '%s': %+v\n", unit.Name, err)
+			} else {
+				s.Dependencies = property.Value.Value().([]string)
+			}
+
 			if property, err = conn.GetUnitProperty(unit.Name, "ActiveEnterTimestamp"); err != nil {
 				fmt.Fprintf(os.Stderr, "error getting memory for service '%s': %+v\n", unit.Name, err)
 				err = nil
@@ -318,21 +340,20 @@ func ListServices(ctx context.Context, ch chan Service) (err error) {
 				start = time.UnixMicro(int64(property.Value.Value().(uint64)))
 				uptime = time.Now().Sub(start)
 			}
+			s.LastRestart = start
+			s.MemoryUsage = truncate(float64(memory)/float64(total)*100, 2)
+			s.CPUUsage = truncate(float64((cpu*time.Duration(runtime.NumCPU())/uptime).Milliseconds()/10), 2)
+		case "dead", "failed":
+			s.Health = "critical"
+		case "exited":
+			s.Health = "ok"
+		default:
+			fmt.Fprintf(os.Stderr, "unknown state %s\n", unit.SubState)
+			s.Health = "stopped"
 		}
+
 		select {
-		case ch <- Service{
-			ID:          unit.Name,
-			UUID:        unit.Name,
-			Name:        strings.TrimSuffix(unit.Name, ".service"),
-			Type:        "system",
-			Health:      "healthy",
-			Description: unit.Description,
-			Status:      unit.SubState,
-			MemoryUsage: truncate(float64(memory)/float64(total)*100, 2),
-			CPUUsage:    truncate(float64((cpu*time.Duration(runtime.NumCPU())/uptime).Milliseconds()/10), 2),
-			Uptime:      uptime.String(),
-			LastRestart: start,
-		}:
+		case ch <- s:
 		case <-ctx.Done():
 			return
 		}
