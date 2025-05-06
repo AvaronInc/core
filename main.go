@@ -284,11 +284,11 @@ func ListServices(ctx context.Context, ch chan Service) (err error) {
 		return
 	}
 	for _, unit := range units {
-		i := strings.LastIndex(unit.Name, ".")
-		if i < 0 || i == len(unit.Name)-1 {
+		if strings.HasPrefix(unit.Name, "systemd") {
 			continue
 		}
-		if !strings.HasSuffix(unit.Name, ".service") {
+		i := strings.LastIndex(unit.Name, ".")
+		if i < 0 || i == len(unit.Name)-1 {
 			continue
 		}
 		var (
