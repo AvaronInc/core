@@ -7,31 +7,30 @@ run: build
 	./$(BIN)
 
 $(BIN).service: in.service Makefile
-	sed 's,@PREFIX,$(PREFIX),g; s,@BIN,$(BIN),g' in.service > $(BIN).service
+	sed 's,@PREFIX,$(PREFIX),g; s,@BIN,$(BIN),g' in.service > $@
 
 $(BIN).rules: in.rules Makefile
 	sed 's,@BIN,$(BIN),g' in.rules > $@
 
 install: build
-	if id $(BIN) >/dev/null 1>&2; then \
-		echo "$(BIN) user already exists" 1>&2; \
-		exit 1; \
-	fi
-
 	mkdir -p $(PREFIX)/lib/systemd/system/
-	cp $(BIN) $(PREFIX)/bin/$(BIN)
+	cp -f $(BIN) $(PREFIX)/bin/$(BIN)
 	mkdir -p $(PREFIX)/lib/systemd/system/
-	cp $(BIN).service $(PREFIX)/lib/systemd/system/$(BIN).service
+	cp -f $(BIN).service $(PREFIX)/lib/systemd/system/$(BIN).service
 
-	useradd -m $(BIN) -s /bin/sh -r -G ssl
-
-	printf "%s ALL=(ALL) !ALL\n"                       "$(BIN)"  > "/etc/sudoers.d/$(BIN)"
+	printf "%s ALL=(ALL) !ALL\n" "$(BIN)"  > "/etc/sudoers.d/$(BIN)"
 	printf "%s ALL=(ALL) NOPASSWD: /usr/sbin/ip, /usr/bin/wg, /usr/sbin/ethtool, /usr/local/sbin/ethtool\n" "$(BIN)" >> "/etc/sudoers.d/$(BIN)"
 
-	su $(BIN) sh -c 'cd && yes "" | ssh-keygen && mkdir -p peers wireguard'
-	su $(BIN) sh -c 'cd ~/wireguard && touch private && chmod 600 private && chown $(BIN) private'
-	su $(BIN) sh -c 'cd ~/wireguard && wg genkey | tee private | wg pubkey > public'
-	su $(BIN) sh -c 'cd ~/wireguard && chmod 400 private'
+	if id $(BIN) >/dev/null 2>&1; then \
+		printf "user %s already exists - not recreating\n" $(BIN); \
+	else \
+		(grep ^ssl: /etc/group >/dev/null || groupadd ssl) && \
+		useradd -m $(BIN) -s /bin/sh -r -G ssl && \
+		su $(BIN) sh -c 'cd && yes "" | ssh-keygen && mkdir -p peers wireguard' && \
+		su $(BIN) sh -c 'cd ~/wireguard && touch private && chmod 600 private && chown $(BIN) private' && \
+		su $(BIN) sh -c 'cd ~/wireguard && wg genkey | tee private | wg pubkey > public' && \
+		su $(BIN) sh -c 'cd ~/wireguard && chmod 400 private'; \
+	fi
 
 uninstall:
 	rm -f /etc/$(BIN)/key \
