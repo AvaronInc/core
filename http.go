@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	systemd "github.com/coreos/go-systemd/v22/dbus"
 	"io"
 	"net"
 	"net/http"
@@ -334,6 +335,58 @@ func handle(ctx context.Context, conn net.Conn) {
 		res.Header = http.Header{
 			"Content-Type": []string{"application/json"},
 		}
+	case "/api/services/start", "/api/services/stop", "/api/services/restart":
+		if req.Method != "POST" {
+			res.StatusCode = http.StatusMethodNotAllowed
+			break
+		}
+		var conn *systemd.Conn
+		conn, err = systemd.NewSystemConnectionContext(ctx)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed connecting to systemd: %+v", err)
+			res.StatusCode = http.StatusInternalServerError
+			return
+		}
+		defer conn.Close()
+
+		dec := json.NewDecoder(req.Body)
+		if t, _ := dec.Token(); t != json.Delim('[') {
+			fmt.Fprintf(os.Stderr, "error reading services '[' for restart: %+v", err)
+			res.StatusCode = http.StatusInternalServerError
+			break
+		}
+
+		var service string
+		for dec.More() {
+			err = dec.Decode(&service)
+			if err != nil {
+				break
+			}
+			switch req.URL.Path {
+			case "/api/services/start":
+				_, err = conn.StartUnitContext(ctx, service, "replace", nil)
+			case "/api/services/stop":
+				_, err = conn.StopUnitContext(ctx, service, "replace", nil)
+			case "/api/services/restart":
+				_, err = conn.RestartUnitContext(ctx, service, "replace", nil)
+			}
+			if err != nil {
+				break
+			}
+		}
+
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error reading services for restart: %+v", err)
+			res.StatusCode = http.StatusInternalServerError
+			break
+		}
+
+		if t, _ := dec.Token(); t != json.Delim(']') {
+			fmt.Fprintf(os.Stderr, "error reading services ']' for restart: %+v", err)
+			res.StatusCode = http.StatusInternalServerError
+			break
+		}
+
 	default:
 		if req.Method != "GET" {
 			res.StatusCode = http.StatusNotFound
