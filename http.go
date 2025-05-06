@@ -345,7 +345,7 @@ func handle(ctx context.Context, conn net.Conn) {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "failed connecting to systemd: %+v", err)
 			res.StatusCode = http.StatusInternalServerError
-			return
+			break
 		}
 		defer conn.Close()
 
@@ -412,7 +412,6 @@ end:
 	defer conn.Close()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error processing request: %+v", err)
-		return
 	}
 	res.Status = http.StatusText(res.StatusCode)
 
