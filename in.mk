@@ -17,6 +17,7 @@ install: build
 	cp -f $(BIN) $(PREFIX)/bin/$(BIN)
 	mkdir -p $(PREFIX)/lib/systemd/system/
 	cp -f $(BIN).service $(PREFIX)/lib/systemd/system/$(BIN).service
+	cp -f $(BIN).rules /etc/polkit-1/rules.d/$(BIN).rules
 
 	printf "%s ALL=(ALL) !ALL\n" "$(BIN)"  > "/etc/sudoers.d/$(BIN)"
 	printf "%s ALL=(ALL) NOPASSWD: /usr/sbin/ip, /usr/bin/wg, /usr/sbin/ethtool, /usr/local/sbin/ethtool\n" "$(BIN)" >> "/etc/sudoers.d/$(BIN)"
