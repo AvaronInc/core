@@ -1,4 +1,4 @@
-build: $(BIN) $(BIN).service
+build: $(BIN) $(BIN).service $(BIN).rules
 
 $(BIN): $(GO_FILES)
 	go build
@@ -8,6 +8,9 @@ run: build
 
 $(BIN).service: in.service Makefile
 	sed 's,@PREFIX,$(PREFIX),g; s,@BIN,$(BIN),g' in.service > $(BIN).service
+
+$(BIN).rules: in.rules Makefile
+	sed 's,@BIN,$(BIN),g' in.rules > $@
 
 install: build
 	if id $(BIN) >/dev/null 1>&2; then \
