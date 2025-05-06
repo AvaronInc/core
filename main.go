@@ -291,7 +291,7 @@ func ListServices(ctx context.Context, ch chan Service) (err error) {
 			property *systemd.Property
 			memory   uint64
 			cpu      time.Duration
-			uptime    time.Duration
+			uptime   time.Duration
 			start    time.Time
 		)
 
@@ -329,8 +329,8 @@ func ListServices(ctx context.Context, ch chan Service) (err error) {
 			Description: unit.Description,
 			Status:      unit.SubState,
 			MemoryUsage: truncate(float64(memory)/float64(total)*100, 2),
-			CPUUsage:    truncate(float64(((cpu*time.Duration(runtime.NumCPU())/uptime)).Milliseconds()/10), 2),
-			Uptime: uptime.String(),
+			CPUUsage:    truncate(float64((cpu*time.Duration(runtime.NumCPU())/uptime).Milliseconds()/10), 2),
+			Uptime:      uptime.String(),
 			LastRestart: start,
 		}:
 		case <-ctx.Done():
