@@ -351,6 +351,10 @@ func ListServices(ctx context.Context, ch chan Service) (err error) {
 				Uptime:       uptime.String(),
 				Dependencies: []string{},
 				LogEntries:   []LogEntry{},
+				AssignedResources: AssignedResources {
+					CPUCores: runtime.NumCPU(),
+					NetworkInterfaces: []string{},
+				},
 			}
 		)
 
