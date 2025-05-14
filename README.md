@@ -21,11 +21,14 @@ PATH=$HOME/.local/bin/:$PATH &&
 		iptables \
 		libcurl4-openssl-dev \
 		libglib2.0-dev \
+		libjson-perl \
 		libmaxminddb-dev \
 		libmnl-dev \
 		libnghttp2-dev \
+		libnl-genl-3-dev
 		libpcap-dev \
 		libpcre2-dev \
+		libsystemd-dev
 		libtool \
 		libwww-perl \
 		libyaml-dev \
