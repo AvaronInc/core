@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	systemd "github.com/coreos/go-systemd/v22/dbus"
 	"io"
 	"net"
@@ -55,6 +56,132 @@ func Listen(ctx context.Context, ch chan net.Conn, listener net.Listener) {
 		case <-ctx.Done():
 			return
 		}
+	}
+}
+
+type ChatRequest struct {
+	prompt string
+	id     int
+	conn   net.Conn
+}
+
+type chat struct {
+	words  chan string
+	r      io.ReadCloser
+	w      io.WriteCloser
+	ctx    context.Context
+	cancel context.CancelFunc
+	cmd    *exec.Cmd
+}
+
+
+var (
+	ChatRequests = make(chan ChatRequest)
+	Chats = make([]*chat, 16)
+)
+
+func ServeChats(ctx context.Context) {
+	var n, i int
+
+	for {
+		var req ChatRequest
+		var res = http.Response{
+			Proto:      "HTTP/1.1",
+			ProtoMajor: 1,
+			ProtoMinor: 1,
+			StatusCode: http.StatusOK,
+		}
+
+		select {
+		case req = <-ChatRequests:
+			i = req.id
+			if i < 0 && i >= len(Chats) {
+				i = n % len(Chats)
+			}
+			if Chats[i] == nil {
+				Chats[i] = &chat{}
+				cmd := exec.Command("ollama", "run", "mixtral")
+				var e1, e2 error
+				Chats[i].w, e1 = cmd.StdinPipe()
+				Chats[i].r, e2 = cmd.StdoutPipe()
+				if e1 == nil && e2 != nil {
+					e1 = e2
+				}
+				if e1 != nil {
+					res.StatusCode = http.StatusInternalServerError
+					fmt.Fprintf(os.Stderr, "failed to open pipes: %+v", e1)
+					break
+				}
+				err := cmd.Start()
+				if err != nil {
+					res.StatusCode = http.StatusInternalServerError
+					fmt.Fprintf(os.Stderr, "failed to start ollama: %+v", err)
+					break
+				}
+
+				Chats[i].ctx, Chats[i].cancel = context.WithCancel(context.Background())
+				go func(i int) {
+					err := Chats[i].cmd.Wait()
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "ollama exit error: %+v", err)
+					}
+					Chats[i].cancel()
+				}(i)
+
+				Chats[i].words = make(chan string)
+
+				go func(i int) {
+					var buf [32]byte
+					defer close(Chats[i].words)
+					for {
+						n, err := Chats[i].r.Read(buf[:])
+						if err != nil {
+							break
+						}
+						select {
+						case Chats[i].words <- string(buf[:n]):
+						case <-Chats[i].ctx.Done():
+							return
+						}
+
+					}
+				}(i)
+
+				n++
+			}
+
+			_, err := fmt.Fprintf(Chats[i].w, "%s\n", req.prompt)
+			if err != nil {
+				Chats[i%len(Chats)] = nil
+				res.StatusCode = http.StatusInternalServerError
+				fmt.Fprintf(os.Stderr, "failed to write to process: %+v", err)
+				break
+			}
+			var w io.WriteCloser
+			res.Body, w = io.Pipe()
+			go func(i int) {
+				defer w.Close()
+				for {
+					var word string
+					select {
+					case word = <-Chats[i].words:
+					case <-time.After(2 * time.Second):
+						return
+					}
+					fmt.Fprintf(w, "%s", word)
+				}
+			}(i)
+
+		case <-ctx.Done():
+			return
+		}
+		go func(conn net.Conn, res http.Response) {
+			if err := res.Write(conn); err != nil {
+				fmt.Fprintf(os.Stderr, "error writing request: %+v", err)
+			}
+			conn.Close()
+		}(req.conn, res)
+
 	}
 }
 
@@ -289,19 +416,42 @@ func handle(ctx context.Context, conn net.Conn) {
 			res.StatusCode = http.StatusMethodNotAllowed
 			break
 		}
-		cmd := exec.Command("cat")
-		cmd.Stdin = req.Body
-		res.Body, err = cmd.StdoutPipe()
+		var cr = ChatRequest{
+			conn: conn,
+		}
+
+		params := req.URL.Query()
+		if strs := params["id"]; len(strs) <= 0 {
+			// ok
+		} else if n, err := strconv.Atoi(strs[0]); err != nil {
+			// ok
+		} else if n < 0 || n >= len(Chats){
+			fmt.Fprintf(os.Stderr, "chat id out of range", err)
+			res.StatusCode = http.StatusBadRequest
+			break
+		} else {
+			cr.id = n
+		}
+
+		buf, err := io.ReadAll(req.Body)
 		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed reading body: %+v", err)
 			res.StatusCode = http.StatusInternalServerError
-			fmt.Fprintf(os.Stderr, "failed to create shell pipe: %+v\n", err)
 			break
 		}
-		err = cmd.Start()
-		if err != nil {
+
+		if len(buf) == 0 {
+			fmt.Fprintf(os.Stderr, "empty body: %+v", err)
 			res.StatusCode = http.StatusInternalServerError
-			fmt.Fprintf(os.Stderr, "failed to start command: %+v\n", err)
 			break
+		}
+
+		cr.prompt = string(buf)
+
+		select {
+		case <-ctx.Done():
+		case ChatRequests <- cr:
+			return
 		}
 	case "/api/services":
 		if req.Method != "GET" {

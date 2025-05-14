@@ -351,8 +351,8 @@ func ListServices(ctx context.Context, ch chan Service) (err error) {
 				Uptime:       uptime.String(),
 				Dependencies: []string{},
 				LogEntries:   []LogEntry{},
-				AssignedResources: AssignedResources {
-					CPUCores: runtime.NumCPU(),
+				AssignedResources: AssignedResources{
+					CPUCores:          runtime.NumCPU(),
 					NetworkInterfaces: []string{},
 				},
 			}
@@ -409,7 +409,7 @@ func ListServices(ctx context.Context, ch chan Service) (err error) {
 			fmt.Fprintf(os.Stderr, "journal initialization error for %s: %+v\n", unit.Name, err)
 		} else {
 			go func() {
-				time.Sleep(time.Millisecond*50) // HACK
+				time.Sleep(time.Millisecond * 50) // HACK
 				j.Close()
 			}()
 			scanner := bufio.NewScanner(j)
@@ -961,6 +961,7 @@ func main() {
 	}
 
 	ctx := context.Background()
+	go ServeChats(ctx)
 	go ServeHTTP(ctx)
 
 	links, err := network.List(ctx)
