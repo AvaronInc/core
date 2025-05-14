@@ -83,7 +83,9 @@ var (
 func ServeChats(ctx context.Context) {
 	var n, i int
 
+	fmt.Println("Serving Chats")
 	for {
+		fmt.Println("Serving Chats 1")
 		var req ChatRequest
 		var res = http.Response{
 			Proto:      "HTTP/1.1",
@@ -94,11 +96,12 @@ func ServeChats(ctx context.Context) {
 
 		select {
 		case req = <-ChatRequests:
+			fmt.Println("REC CR")
 			i = req.id
 			if i < 0 && i >= len(Chats) {
 				i = n % len(Chats)
 			}
-			if Chats[i] == nil {
+			if Chats[i] == nil || Chats[i].cmd == nil {
 				Chats[i] = &chat{}
 				cmd := exec.Command("ollama", "run", "mixtral")
 				var e1, e2 error
@@ -118,6 +121,8 @@ func ServeChats(ctx context.Context) {
 					fmt.Fprintf(os.Stderr, "failed to start ollama: %+v", err)
 					break
 				}
+				fmt.Println("STARTED")
+				Chats[i].cmd = cmd
 
 				Chats[i].ctx, Chats[i].cancel = context.WithCancel(context.Background())
 				go func(i int) {
@@ -131,13 +136,16 @@ func ServeChats(ctx context.Context) {
 				Chats[i].words = make(chan string)
 
 				go func(i int) {
-					var buf [32]byte
+					var buf [64]byte
 					defer close(Chats[i].words)
+					r := io.TeeReader(Chats[i].r, os.Stderr)
 					for {
-						n, err := Chats[i].r.Read(buf[:])
+						fmt.Println("READING")
+						n, err := r.Read(buf[:])
 						if err != nil {
 							break
 						}
+						fmt.Println("READ", string(buf[:n]))
 						select {
 						case Chats[i].words <- string(buf[:n]):
 						case <-Chats[i].ctx.Done():
@@ -147,36 +155,46 @@ func ServeChats(ctx context.Context) {
 					}
 				}(i)
 
+				fmt.Println("WROTE PROMOPT", req.prompt)
+				var w io.WriteCloser
+				res.Body, w = io.Pipe()
+				go func(i int) {
+					defer w.Close()
+					for {
+						var word string
+						var ok bool
+						select {
+						case word, ok = <-Chats[i].words:
+							if !ok {
+								return
+							}
+							fmt.Println("RECED WORD", word)
+						case <-time.After(30 * time.Second):
+							return
+						}
+						fmt.Fprintf(w, "%s", word)
+					}
+				}(i)
 				n++
 			}
 
-			_, err := fmt.Fprintf(Chats[i].w, "%s\n", req.prompt)
+
+			_, err := fmt.Fprintf(Chats[i].w, "%s\r\n", req.prompt)
 			if err != nil {
-				Chats[i%len(Chats)] = nil
+				Chats[i%len(Chats)].cancel()
+				Chats[i%len(Chats)].cmd = nil
 				res.StatusCode = http.StatusInternalServerError
 				fmt.Fprintf(os.Stderr, "failed to write to process: %+v", err)
 				break
 			}
-			var w io.WriteCloser
-			res.Body, w = io.Pipe()
-			go func(i int) {
-				defer w.Close()
-				for {
-					var word string
-					select {
-					case word = <-Chats[i].words:
-					case <-time.After(2 * time.Second):
-						return
-					}
-					fmt.Fprintf(w, "%s", word)
-				}
-			}(i)
+			Chats[i].w.Close()
 
 		case <-ctx.Done():
 			return
 		}
 		go func(conn net.Conn, res http.Response) {
-			if err := res.Write(conn); err != nil {
+			fmt.Println("writing RESP")
+			if err := res.Write(io.MultiWriter(conn, os.Stderr)); err != nil {
 				fmt.Fprintf(os.Stderr, "error writing request: %+v", err)
 			}
 			conn.Close()
@@ -219,7 +237,7 @@ func ServeHTTP(ctx context.Context) {
 	// load balancer - connection times out quicker the more connections there are
 	const (
 		total   = 256
-		timeout = 10 * time.Second
+		timeout = 30 * time.Second
 	)
 
 	var (
@@ -426,7 +444,7 @@ func handle(ctx context.Context, conn net.Conn) {
 		} else if n, err := strconv.Atoi(strs[0]); err != nil {
 			// ok
 		} else if n < 0 || n >= len(Chats){
-			fmt.Fprintf(os.Stderr, "chat id out of range", err)
+			fmt.Fprintf(os.Stderr, "chat id out of range")
 			res.StatusCode = http.StatusBadRequest
 			break
 		} else {
@@ -439,6 +457,7 @@ func handle(ctx context.Context, conn net.Conn) {
 			res.StatusCode = http.StatusInternalServerError
 			break
 		}
+		fmt.Println("READ", string(buf))
 
 		if len(buf) == 0 {
 			fmt.Fprintf(os.Stderr, "empty body: %+v", err)
@@ -448,9 +467,11 @@ func handle(ctx context.Context, conn net.Conn) {
 
 		cr.prompt = string(buf)
 
+		fmt.Println("sending CR")
 		select {
 		case <-ctx.Done():
 		case ChatRequests <- cr:
+			fmt.Println("SENT CR")
 			return
 		}
 	case "/api/services":

@@ -330,7 +330,7 @@ func ListServices(ctx context.Context, ch chan Service) (err error) {
 			continue // dedup
 		}
 		m[unit.Name] = struct{}{}
-		fmt.Fprintf(os.Stderr, "%s\n", unit.Name)
+		//fmt.Fprintf(os.Stderr, "%s\n", unit.Name)
 		i := strings.LastIndex(unit.Name, ".")
 		if i < 0 || i == len(unit.Name)-1 {
 			continue
