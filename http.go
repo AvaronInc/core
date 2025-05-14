@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	filepath "path"
 	"strings"
 	"time"
@@ -283,6 +284,25 @@ func handle(ctx context.Context, conn net.Conn) {
 		}
 
 		return
+	case "/api/chat":
+		if req.Method != "POST" {
+			res.StatusCode = http.StatusMethodNotAllowed
+			break
+		}
+		cmd := exec.Command("cat")
+		cmd.Stdin = req.Body
+		res.Body, err = cmd.StdoutPipe()
+		if err != nil {
+			res.StatusCode = http.StatusInternalServerError
+			fmt.Fprintf(os.Stderr, "failed to create shell pipe: %+v\n", err)
+			break
+		}
+		err = cmd.Start()
+		if err != nil {
+			res.StatusCode = http.StatusInternalServerError
+			fmt.Fprintf(os.Stderr, "failed to start command: %+v\n", err)
+			break
+		}
 	case "/api/services":
 		if req.Method != "GET" {
 			res.StatusCode = http.StatusMethodNotAllowed
