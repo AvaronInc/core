@@ -1,3 +1,15 @@
+### Clone the Back-end
+
+```
+git clone --recurse-submodules https://github.com/AvaronInc/core
+```
+
+### Clone the Front-end
+
+```
+git clone --recurse-submodules https://github.com/AvaronInc/ui
+```
+
 ### Install
 
 ```
@@ -43,9 +55,7 @@ PATH=$HOME/.local/bin/:$PATH &&
 			cd ~/.local && curl https://nodejs.org/dist/v18.16.0/node-v18.16.0-linux-x64.tar.xz |
 				tar xJf  - --strip-components=1
 		fi
-	) &&
-		(:||git clone --recurse-submodules https://github.com/AvaronInc/core) &&
-	(
+	) && (
 		cd core/contrib/ethtool &&
 			./autogen.sh &&
 			./configure --prefix=/usr &&
