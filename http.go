@@ -83,9 +83,7 @@ var (
 func ServeChats(ctx context.Context) {
 	var n, i int
 
-	fmt.Println("Serving Chats")
 	for {
-		fmt.Println("Serving Chats 1")
 		var req ChatRequest
 		var res = http.Response{
 			Proto:      "HTTP/1.1",
@@ -96,7 +94,6 @@ func ServeChats(ctx context.Context) {
 
 		select {
 		case req = <-ChatRequests:
-			fmt.Println("REC CR")
 			i = req.id
 			if i < 0 && i >= len(Chats) {
 				i = n % len(Chats)
@@ -121,7 +118,6 @@ func ServeChats(ctx context.Context) {
 					fmt.Fprintf(os.Stderr, "failed to start ollama: %+v", err)
 					break
 				}
-				fmt.Println("STARTED")
 				Chats[i].cmd = cmd
 
 				Chats[i].ctx, Chats[i].cancel = context.WithCancel(context.Background())
@@ -138,14 +134,12 @@ func ServeChats(ctx context.Context) {
 				go func(i int) {
 					var buf [64]byte
 					defer close(Chats[i].words)
-					r := io.TeeReader(Chats[i].r, os.Stderr)
+					r := Chats[i].r
 					for {
-						fmt.Println("READING")
 						n, err := r.Read(buf[:])
 						if err != nil {
 							break
 						}
-						fmt.Println("READ", string(buf[:n]))
 						select {
 						case Chats[i].words <- string(buf[:n]):
 						case <-Chats[i].ctx.Done():
@@ -155,7 +149,6 @@ func ServeChats(ctx context.Context) {
 					}
 				}(i)
 
-				fmt.Println("WROTE PROMOPT", req.prompt)
 				var w io.WriteCloser
 				res.Body, w = io.Pipe()
 				go func(i int) {
@@ -168,8 +161,8 @@ func ServeChats(ctx context.Context) {
 							if !ok {
 								return
 							}
-							fmt.Println("RECED WORD", word)
-						case <-time.After(30 * time.Second):
+							fmt.Println(word)
+						case <-time.After(60 * time.Second):
 							return
 						}
 						fmt.Fprintf(w, "%s", word)
@@ -193,8 +186,7 @@ func ServeChats(ctx context.Context) {
 			return
 		}
 		go func(conn net.Conn, res http.Response) {
-			fmt.Println("writing RESP")
-			if err := res.Write(io.MultiWriter(conn, os.Stderr)); err != nil {
+			if err := res.Write(conn); err != nil {
 				fmt.Fprintf(os.Stderr, "error writing request: %+v", err)
 			}
 			conn.Close()
@@ -457,7 +449,6 @@ func handle(ctx context.Context, conn net.Conn) {
 			res.StatusCode = http.StatusInternalServerError
 			break
 		}
-		fmt.Println("READ", string(buf))
 
 		if len(buf) == 0 {
 			fmt.Fprintf(os.Stderr, "empty body: %+v", err)
@@ -467,11 +458,9 @@ func handle(ctx context.Context, conn net.Conn) {
 
 		cr.prompt = string(buf)
 
-		fmt.Println("sending CR")
 		select {
 		case <-ctx.Done():
 		case ChatRequests <- cr:
-			fmt.Println("SENT CR")
 			return
 		}
 	case "/api/services":
