@@ -290,26 +290,27 @@ func ServeHTTP(ctx context.Context) {
 
 		fmt.Fprintf(os.Stderr, "duration: %20s\n", d)
 		t := time.Now().Add(d)
-		conn.SetDeadline(t)
-		deadline, _ := context.WithDeadline(ctx, t)
+		conn.SetReadDeadline(t)
+		request, _ := context.WithDeadline(ctx, t)
 		go func() {
 			select {
 			case <-tokens:
 				// borrow token
-			case <-deadline.Done():
+			case <-request.Done():
 				return
 			}
-			handle(deadline, conn)
+			handle(request, conn, t)
 			select {
 			case tokens <- struct{}{}:
 				// return token
-			case <-ctx.Done():
+			case <-request.Done():
+				return
 			}
 		}()
 	}
 }
 
-func handle(ctx context.Context, conn net.Conn) {
+func handle(ctx context.Context, conn net.Conn, deadline time.Time) {
 	var res = http.Response{
 		Proto:      "HTTP/1.1",
 		ProtoMajor: 1,
@@ -588,7 +589,7 @@ func handle(ctx context.Context, conn net.Conn) {
 	}
 
 end:
-
+	conn.SetWriteDeadline(deadline)
 	defer conn.Close()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error processing request: %+v", err)
