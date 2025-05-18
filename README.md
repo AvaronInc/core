@@ -14,12 +14,24 @@ git clone --recurse-submodules https://github.com/AvaronInc/ui
 
 ```
 PATH=$HOME/.local/bin/:$PATH &&
-	printf "deb [signed-by=%s] %s stable main\n" \
-	/usr/share/keyrings/elasticsearch-keyring.gpg \
-	https://artifacts.elastic.co/packages/9.x/apt |
-		sudo tee /etc/apt/sources.list.d/elastic-9.x.list &&
-	curl https://artifacts.elastic.co/GPG-KEY-elasticsearch | gpg --dearmor -o - |
-		sudo tee /usr/share/keyrings/elasticsearch-keyring.gpg > /dev/null
+	(
+		cd /usr/share/keyrings &&
+		curl -L https://artifacts.elastic.co/GPG-KEY-elasticsearch |
+			gpg --dearmor -o - |
+			sudo tee elasticsearch-keyring.gpg &&
+		curl -L https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB |
+			gpg --dearmor |
+			sudo tee oneapi-archive-keyring.gpg &&
+		cd /etc/apt/sources.list.d &&
+		printf "deb [signed-by=%s] %s all main\n"  \
+			/usr/share/keyrings/oneapi-archive-keyring.gpg \
+			https://apt.repos.intel.com/oneapi |
+				sudo tee oneAPI.list &&
+		printf "deb [signed-by=%s] %s stable main\n" \
+		/usr/share/keyrings/elasticsearch-keyring.gpg \
+		https://artifacts.elastic.co/packages/9.x/apt |
+			sudo tee elastic-9.x.list
+	) > /dev/null &&
 	sudo apt-get update &&
 	sudo apt-get -y install \
 		apt-transport-https \
@@ -29,6 +41,8 @@ PATH=$HOME/.local/bin/:$PATH &&
 		gcc \
 		git \
 		golang \
+		intel-basekit \
+		intel-oneapi-runtime-libs \
 		iproute2 \
 		iptables \
 		libcurl4-openssl-dev \
@@ -67,6 +81,15 @@ PATH=$HOME/.local/bin/:$PATH &&
 			./configure &&
 			make -j "$(nproc)" &&
 			sudo "PATH=$PATH" make install
+	) && (
+		cd core/contrib/llama.cpp &&
+			mkdir build &&
+			cd build &&
+			set -- --force &&
+			. /opt/intel/oneapi/2025.1/oneapi-vars.sh &&
+			cmake -DGGML_BLAS_VENDOR=IntelONEAPI -DGGML_SYCL=ON -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icpx -DCMAKE_BUILD_TYPE=Release ..
+			make -j "$(nproc)" &&
+			sudo make install
 	) && (
 		cd core &&
 			./configure &&

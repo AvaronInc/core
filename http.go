@@ -1,6 +1,7 @@
 package main
 
 import (
+	"avaron/llama"
 	"bufio"
 	"bytes"
 	"context"
@@ -8,7 +9,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"strconv"
 	systemd "github.com/coreos/go-systemd/v22/dbus"
 	"io"
 	"net"
@@ -19,6 +19,46 @@ import (
 	"strings"
 	"time"
 )
+
+type Message struct {
+	Content string `json:"content"`
+	Role    string `json:"role"`
+}
+
+func (m Message) String() string {
+	return m.Content
+}
+
+func (m Message) Type() string {
+	return m.Role
+}
+
+/*
+	{
+	  "Prompt": "[INST] hello [/INST] ¡Hola! ¿Cómo estás? If you need help with a translation or have any questions about Spanish, I'm here to assist you. Go ahead and ask me anything.\n\nIf you want to start learning Spanish, there are many resources available online. Duolingo, Babbel, and Rosetta Stone are some popular language-learning\n[INST] hello hello [/INST] ",
+	  "Format": null,
+	  "Images": null,
+	  "Options": {
+	    "num_ctx": 4096,
+	    "num_batch": 512,
+	    "num_gpu": -1,
+	    "num_keep": 4,
+	    "seed": -1,
+	    "num_predict": 81920,
+	    "top_k": 40,
+	    "top_p": 0.9,
+	    "typical_p": 1,
+	    "repeat_last_n": 64,
+	    "temperature": 0.8,
+	    "repeat_penalty": 1.1,
+	    "stop": [
+	      "[INST]",
+	      "[/INST]"
+	    ]
+	  },
+	  "Grammar": ""
+	}
+*/
 
 type ResponseWriter struct {
 	*http.Response
@@ -74,10 +114,9 @@ type chat struct {
 	cmd    *exec.Cmd
 }
 
-
 var (
 	ChatRequests = make(chan ChatRequest)
-	Chats = make([]*chat, 16)
+	Chats        = make([]*chat, 16)
 )
 
 func ServeChats(ctx context.Context) {
@@ -171,7 +210,6 @@ func ServeChats(ctx context.Context) {
 				n++
 			}
 
-
 			_, err := fmt.Fprintf(Chats[i].w, "%s\r\n", req.prompt)
 			if err != nil {
 				Chats[i%len(Chats)].cancel()
@@ -229,7 +267,7 @@ func ServeHTTP(ctx context.Context) {
 	// load balancer - connection times out quicker the more connections there are
 	const (
 		total   = 256
-		timeout = 30 * time.Second
+		timeout = 60 * time.Second
 	)
 
 	var (
@@ -422,48 +460,69 @@ func handle(ctx context.Context, conn net.Conn, deadline time.Time) {
 		}
 
 		return
-	case "/api/chat":
+	case "/api/completions":
 		if req.Method != "POST" {
 			res.StatusCode = http.StatusMethodNotAllowed
 			break
 		}
-		var cr = ChatRequest{
-			conn: conn,
+
+		dec := json.NewDecoder(req.Body)
+		if t, _ := dec.Token(); t != json.Delim('[') {
+			fmt.Fprintf(os.Stderr, "error reading services '[' for restart: %+v", err)
+			res.StatusCode = http.StatusInternalServerError
+			break
 		}
 
-		params := req.URL.Query()
-		if strs := params["id"]; len(strs) <= 0 {
-			// ok
-		} else if n, err := strconv.Atoi(strs[0]); err != nil {
-			// ok
-		} else if n < 0 || n >= len(Chats){
-			fmt.Fprintf(os.Stderr, "chat id out of range")
+		var e1, e2 error
+
+		messages := make(chan llama.Message)
+		tokens := make(chan []byte)
+		ctx, cancel := context.WithCancel(ctx)
+		go func() {
+			e1 = llama.Do(ctx, messages, tokens)
+			if e1 != nil {
+				fmt.Fprintf(os.Stderr, "error forwarding request to llama: %+v", e1)
+			}
+		}()
+
+		var message Message
+		for dec.More() {
+			if e2 = dec.Decode(&message); e2 != nil {
+				break
+			}
+			messages <- message
+		}
+
+		close(messages)
+
+		if t, _ := dec.Token(); t != json.Delim(']') {
+			e2 = fmt.Errorf("error reading services ']' for restart: %+v", err)
+			res.StatusCode = http.StatusInternalServerError
+		}
+
+		if e2 != nil {
+			fmt.Fprintf(os.Stderr, "error decoding message in chat request: %+v", err)
 			res.StatusCode = http.StatusBadRequest
 			break
-		} else {
-			cr.id = n
 		}
 
-		buf, err := io.ReadAll(req.Body)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed reading body: %+v", err)
-			res.StatusCode = http.StatusInternalServerError
-			break
+		var w io.WriteCloser
+		res.Body, w = io.Pipe()
+		res.Header = http.Header{
+			"Content-Type": []string{"application/json"},
 		}
 
-		if len(buf) == 0 {
-			fmt.Fprintf(os.Stderr, "empty body: %+v", err)
-			res.StatusCode = http.StatusInternalServerError
-			break
-		}
+		go func() {
+			defer w.Close()
+			defer cancel()
+			for token := range tokens {
+				if _, err := w.Write(token); err != nil {
+					break
+				}
+			}
+		}()
 
-		cr.prompt = string(buf)
-
-		select {
-		case <-ctx.Done():
-		case ChatRequests <- cr:
-			return
-		}
+		deadline = time.Now().Add(time.Second * 10)
 	case "/api/services":
 		if req.Method != "GET" {
 			res.StatusCode = http.StatusMethodNotAllowed

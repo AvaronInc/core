@@ -960,7 +960,36 @@ func main() {
 		}
 	}
 
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+
+	os.Remove("llama.sock")
+	llama := exec.Command("llama-server", "--host", "llama.sock", "--model", "mixtral.gguf")
+	llama.Env = append(os.Environ(),
+		"OLLAMA_NUM_GPU=999",
+		"ZES_ENABLE_SYSMAN=1",
+		"SYCL_CACHE_PERSISTENT=1",
+		"OLLAMA_KEEP_ALIVE=10m",
+		"SYCL_PI_LEVEL_ZERO_USE_IMMEDIATE_COMMANDLISTS=1")
+
+	llama.Stdout = os.Stderr
+	llama.Stderr = os.Stderr
+
+	if err = llama.Start(); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to start llama server\n", err)
+		os.Exit(1)
+	}
+
+	go func() {
+		n := 0
+		if err := llama.Wait(); err != nil {
+			fmt.Fprintf(os.Stderr, "llama server failed for some reason: %+v\n", err)
+			n = 1
+		}
+		cancel()
+		time.Sleep(5 * time.Second)
+		os.Exit(n)
+	}()
+
 	go ServeChats(ctx)
 	go ServeHTTP(ctx)
 

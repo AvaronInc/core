@@ -26,7 +26,7 @@ install: build
 		printf "user %s already exists - not recreating\n" $(BIN); \
 	else \
 		(grep ^ssl: /etc/group >/dev/null || groupadd ssl) && \
-		useradd -m $(BIN) -s /bin/sh -r -G ssl && \
+		useradd -m $(BIN) -s /bin/sh -r -G ssl,video,render && \
 		su $(BIN) sh -c 'cd && yes "" | ssh-keygen && mkdir -p peers wireguard' && \
 		su $(BIN) sh -c 'cd ~/wireguard && touch private && chmod 600 private && chown $(BIN) private' && \
 		su $(BIN) sh -c 'cd ~/wireguard && wg genkey | tee private | wg pubkey > public' && \
