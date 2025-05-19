@@ -26,41 +26,6 @@ type Message struct {
 	Role    string `json:"role"`
 }
 
-func (m Message) String() string {
-	return m.Content
-}
-
-func (m Message) Type() string {
-	return m.Role
-}
-
-/*
-	{
-	  "Prompt": "[INST] hello [/INST] ¡Hola! ¿Cómo estás? If you need help with a translation or have any questions about Spanish, I'm here to assist you. Go ahead and ask me anything.\n\nIf you want to start learning Spanish, there are many resources available online. Duolingo, Babbel, and Rosetta Stone are some popular language-learning\n[INST] hello hello [/INST] ",
-	  "Format": null,
-	  "Images": null,
-	  "Options": {
-	    "num_ctx": 4096,
-	    "num_batch": 512,
-	    "num_gpu": -1,
-	    "num_keep": 4,
-	    "seed": -1,
-	    "num_predict": 81920,
-	    "top_k": 40,
-	    "top_p": 0.9,
-	    "typical_p": 1,
-	    "repeat_last_n": 64,
-	    "temperature": 0.8,
-	    "repeat_penalty": 1.1,
-	    "stop": [
-	      "[INST]",
-	      "[/INST]"
-	    ]
-	  },
-	  "Grammar": ""
-	}
-*/
-
 type ResponseWriter struct {
 	*http.Response
 	*bytes.Buffer
@@ -473,56 +438,89 @@ func handle(ctx context.Context, conn net.Conn, deadline time.Time) {
 			break
 		}
 
-		var e1, e2 error
-
-		messages := make(chan llama.Message)
-		tokens := make(chan []byte)
-		ctx, cancel := context.WithCancel(ctx)
-		go func() {
-			e1 = llama.Do(ctx, messages, tokens)
-			if e1 != nil {
-				log.Printf("error forwarding request to llama:", e1)
-			}
-		}()
-
-		var message Message
+		prompt := &strings.Builder{}
+		var m Message
 		for dec.More() {
-			if e2 = dec.Decode(&message); e2 != nil {
+			if err = dec.Decode(&m); err != nil {
 				break
 			}
-			messages <- message
+			switch m.Role {
+			case "user":
+				fmt.Fprintf(prompt, "[INST]%s[/INST]", m.Content)
+			default:
+				fmt.Fprintf(prompt, "%s", m.Content)
+			}
 		}
 
-		close(messages)
-
 		if t, _ := dec.Token(); t != json.Delim(']') {
-			e2 = fmt.Errorf("error reading services ']' for restart: %+v", err)
+			err = fmt.Errorf("error reading services ']' for restart: %+v", err)
 			res.StatusCode = http.StatusInternalServerError
 		}
 
-		if e2 != nil {
+		if err != nil {
 			log.Println("error decoding message in chat request:", err)
 			res.StatusCode = http.StatusBadRequest
 			break
 		}
 
+		var buf []byte
+		buf, err = json.Marshal(llama.Request{
+			Prompt: prompt.String(),
+			Model:  "mixtral.gguf",
+			Stream: true,
+		})
+
+		var (
+			lreq *http.Request
+			lres *http.Response
+		)
+
+		lreq, err = http.NewRequestWithContext(ctx, "POST", "http://localhost/completions", bytes.NewReader(buf))
+		if err != nil {
+			log.Println("error forming llama request:", err)
+			res.StatusCode = http.StatusInternalServerError
+			break
+		}
+
+		lres, err = llama.Client.Do(lreq)
+		if err != nil {
+			log.Println("error forwarding request to llama:", err)
+			res.StatusCode = http.StatusInternalServerError
+			break
+		}
+
 		var w io.WriteCloser
 		res.Body, w = io.Pipe()
-		res.Header = http.Header{
-			"Content-Type": []string{"application/json"},
-		}
+		var token llama.Token
+		scanner := bufio.NewScanner(lres.Body)
 
 		go func() {
 			defer w.Close()
-			defer cancel()
-			for token := range tokens {
-				if _, err := w.Write(token); err != nil {
+			for scanner.Scan() {
+				line := scanner.Text()
+				switch {
+				case len(line) == 0:
+					continue
+				case strings.HasPrefix(line, "data: "):
+					line = strings.TrimPrefix(line, "data: ")
 					break
+				default:
+					log.Panicln("unexpected line from llama-server stream:", line)
 				}
+				if err = json.Unmarshal([]byte(line), &token); err != nil {
+					log.Panicln("error marshalling llama json:", err, line)
+				}
+				_, err = w.Write([]byte(token.Content))
+				if err != nil {
+					log.Println("error writing llama token to response body:", err, line)
+				}
+
 			}
 		}()
 
-		deadline = time.Now().Add(time.Second * 10)
+		res.Header = http.Header{
+			"Content-Type": []string{"application/json"},
+		}
 	case "/api/services":
 		if req.Method != "GET" {
 			res.StatusCode = http.StatusMethodNotAllowed
