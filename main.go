@@ -14,6 +14,7 @@ import (
 	journal "github.com/coreos/go-systemd/v22/sdjournal"
 	"io"
 	"io/fs"
+	"log"
 	"math"
 	"net"
 	"net/http"
@@ -47,7 +48,7 @@ func (k *Key) UnmarshalText(buf []byte) (int64, error) {
 		return 0, io.ErrShortBuffer
 	}
 
-	fmt.Fprintf(os.Stderr, "decoding buf: '%s'\n", buf[:])
+	log.Printf("decoding buf: '%s'\n", buf[:])
 	_, err := base64.StdEncoding.Decode(k[:], bytes.TrimSpace(buf[:]))
 	return int64(len(buf)), err
 }
@@ -74,7 +75,7 @@ func GenerateLinkLocal(k1, k2 *Key) (n1, n2 net.IPNet) {
 	if len(k1) < net.IPv6len {
 		panic("key should be longer than IPv6 address")
 	}
-	fmt.Fprintf(os.Stderr, "XORING\n%s\n%s\n", k1.String(), k2.String())
+	log.Printf("XORING\n%s\n%s\n", k1.String(), k2.String())
 
 	var (
 		prefix = []byte{0xfe, 0x80}
@@ -276,13 +277,13 @@ func ListServices(ctx context.Context, ch chan Service) (err error) {
 	var files []systemd.UnitFile
 	files, err = conn.ListUnitFilesContext(ctx)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to list unit-files: %v\n", err)
+		log.Println("failed to list unit-files:", err)
 		return
 	}
 
 	total, err := mem.GetTotal()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to find OS memory amount: %v\n", err)
+		log.Println("failed to find OS memory amount:", err)
 		return
 	}
 
@@ -309,7 +310,7 @@ func ListServices(ctx context.Context, ch chan Service) (err error) {
 	var units []systemd.UnitStatus
 	units, err = conn.ListUnitsByNamesContext(ctx, paths)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to list units: %v\n", err)
+		log.Println("failed to list units:", err)
 		return
 	}
 
@@ -330,7 +331,7 @@ func ListServices(ctx context.Context, ch chan Service) (err error) {
 			continue // dedup
 		}
 		m[unit.Name] = struct{}{}
-		//fmt.Fprintf(os.Stderr, "%s\n", unit.Name)
+		//log.Printf("%s\n", unit.Name)
 		i := strings.LastIndex(unit.Name, ".")
 		if i < 0 || i == len(unit.Name)-1 {
 			continue
@@ -366,25 +367,25 @@ func ListServices(ctx context.Context, ch chan Service) (err error) {
 		case "running":
 			s.Health = "ok"
 			if property, err = conn.GetServiceProperty(unit.Name, "MemoryCurrent"); err != nil {
-				fmt.Fprintf(os.Stderr, "error getting memory for service '%s': %+v\n", unit.Name, err)
+				log.Printf("error getting memory for service '%s': %+v\n", unit.Name, err)
 			} else {
 				memory = property.Value.Value().(uint64)
 			}
 
 			if property, err = conn.GetServiceProperty(unit.Name, "CPUUsageNSec"); err != nil {
-				fmt.Fprintf(os.Stderr, "error getting memory for service '%s': %+v\n", unit.Name, err)
+				log.Printf("error getting memory for service '%s': %+v\n", unit.Name, err)
 			} else {
 				cpu = time.Duration(property.Value.Value().(uint64)) * time.Nanosecond
 			}
 
 			if property, err = conn.GetUnitProperty(unit.Name, "Requires"); err != nil {
-				fmt.Fprintf(os.Stderr, "error getting memory for service '%s': %+v\n", unit.Name, err)
+				log.Printf("error getting memory for service '%s': %+v\n", unit.Name, err)
 			} else {
 				s.Dependencies = property.Value.Value().([]string)
 			}
 
 			if property, err = conn.GetUnitProperty(unit.Name, "ActiveEnterTimestamp"); err != nil {
-				fmt.Fprintf(os.Stderr, "error getting memory for service '%s': %+v\n", unit.Name, err)
+				log.Printf("error getting memory for service '%s': %+v\n", unit.Name, err)
 				err = nil
 			} else {
 				start = time.UnixMicro(int64(property.Value.Value().(uint64)))
@@ -398,7 +399,7 @@ func ListServices(ctx context.Context, ch chan Service) (err error) {
 		case "exited":
 			s.Health = "ok"
 		default:
-			fmt.Fprintf(os.Stderr, "unknown state %s\n", unit.SubState)
+			log.Printf("unknown state %s\n", unit.SubState)
 			s.Health = "stopped"
 		}
 
@@ -406,7 +407,7 @@ func ListServices(ctx context.Context, ch chan Service) (err error) {
 		var j *journal.JournalReader
 		j, err = journal.NewJournalReader(config)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "journal initialization error for %s: %+v\n", unit.Name, err)
+			log.Printf("journal initialization error for %s: %+v\n", unit.Name, err)
 		} else {
 			go func() {
 				time.Sleep(time.Millisecond * 50) // HACK
@@ -459,15 +460,14 @@ func Analyze(links map[string]*network.Interface, metrics []network.TCPMetric) (
 		jitter += time.Duration(float64(time.Second) * m.RoundTripTimeVariance)
 		link, ok := addresses[m.Source.String()]
 		if !ok {
-			fmt.Fprintf(os.Stderr, "warning - failed to find link by address: %s\n", m.Source.String())
+			log.Printf("warning - failed to find link by address: %s\n", m.Source.String())
 			continue
 		}
 		if m.Age > oldest[link.IfName] {
 			oldest[link.IfName] = m.Age
 		}
 	}
-	fmt.Println("abc", oldest)
-	fmt.Println("abc", addresses)
+
 	n := time.Duration(len(metrics))
 
 	total.Latency = (latency / n).Milliseconds()
@@ -548,7 +548,7 @@ func GetBranch() (Branch, error) {
 			}
 			link, ok := links[r.Device]
 			if !ok {
-				fmt.Fprintf(os.Stderr, "warning - failed to find link %s given device name from routing table", r.Device)
+				log.Printf("warning - failed to find link %s given device name from routing table\n", r.Device)
 				continue
 			}
 			m[r.Device] = struct{}{}
@@ -668,7 +668,7 @@ func controller() error {
 			return fmt.Errorf("failed writing ssh file: %+v", err)
 		}
 
-		fmt.Fprintf(os.Stderr, "got public keys - wg: %s, ssh: %s\n", key.String(), string(ssh))
+		log.Printf("got public keys - wg: %s, ssh: %s\n", key.String(), string(ssh))
 
 		peers, err := GetPeerInfo()
 		if err != nil {
@@ -762,7 +762,7 @@ func GetPeerInfo() (map[Key]PeerInfo, error) {
 
 	peers := make(map[Key]PeerInfo, len(entries))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to read peers directory: %+v\n", err)
+		log.Println("failed to read peers directory:", err)
 		// this is fine
 		return peers, nil
 	}
@@ -774,7 +774,7 @@ func GetPeerInfo() (map[Key]PeerInfo, error) {
 		if err != nil {
 			return peers, fmt.Errorf("failed to parse key '%s': %+v\n", entry.Name(), err)
 		}
-		fmt.Fprintf(os.Stderr, "parsed key: %s\n", k.String())
+		log.Printf("parsed key: %s\n", k.String())
 		dir := filepath.Join("peers", entry.Name())
 		address, err := os.ReadFile(filepath.Join(dir, "address"))
 		if err != nil {
@@ -783,7 +783,7 @@ func GetPeerInfo() (map[Key]PeerInfo, error) {
 		peers[*k] = &PeerFSEntry{
 			address: string(bytes.TrimSpace(address)),
 		}
-		fmt.Fprintf(os.Stderr, "read peer: %s, %s\n", k.String(), string(address))
+		log.Printf("read peer: %s, %s\n", k.String(), string(address))
 	}
 
 	return peers, nil
@@ -840,32 +840,29 @@ var (
 )
 
 func main() {
+	log.SetFlags(log.Lshortfile)
 	if len(os.Args) < 1 {
-		fmt.Fprintf(os.Stderr, "unnamed binary")
-		os.Exit(1)
+		log.Fatalf("unnamed binary\n")
 	}
 
 	base := filepath.Base(os.Args[0])
 	user, err := user.Lookup(base)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to find user '%s' - %+v\n", base, err)
-		os.Exit(1)
+		log.Fatalf("failed to find user '%s' - %+v\n", base, err)
 	}
 
 	uid, err := strconv.Atoi(user.Uid)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to parse %s's UID '%s' - %+v\n", base, user.Uid, err)
-		os.Exit(1)
+		log.Fatalf("failed to parse %s's UID '%s' - %+v\n", base, user.Uid, err)
 	}
 
 	puid := os.Getuid()
 	if puid != 0 && puid != uid {
-		fmt.Fprintf(os.Stderr, "%s was invoked by UID %d, however, the %s user has UID %d\n", os.Args[0], puid, filepath.Base(os.Args[0]), uid)
-		os.Exit(1)
+		log.Fatalf("%s was invoked by UID %d, however, the %s user has UID %d\n", os.Args[0], puid, filepath.Base(os.Args[0]), uid)
 	}
 
 	if err := os.Chdir(user.HomeDir); err != nil {
-		fmt.Fprintf(os.Stderr, "changing to home directory - %+v\n", err)
+		log.Println("changing to home directory:", err)
 		os.Exit(1)
 	}
 
@@ -873,7 +870,7 @@ func main() {
 		buf := fmt.Sprintf("%d\n", os.Getpid())
 		err := os.WriteFile("pid", []byte(buf), 0644)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed to create PID file: %+v\n", err)
+			log.Println("failed to create PID file:", err)
 			os.Exit(1)
 		}
 	}
@@ -883,42 +880,41 @@ func main() {
 
 	paths, err := fs.Glob(ssh, "*.pub")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to find public SSH keys: %+v\n", err)
+		log.Println("failed to find public SSH keys:", err)
 		os.Exit(1)
 	}
-	fmt.Fprintf(os.Stderr, "found %d SSH public keys: %s\n", len(paths), strings.Join(paths, ", "))
+	log.Printf("found %d SSH public keys: %s\n", len(paths), strings.Join(paths, ", "))
 
 	for _, path := range paths {
 		pub, err := fs.ReadFile(ssh, path)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error reading %s: %+v\n", path, err)
+			log.Printf("error reading %s: %+v\n", path, err)
 			continue
 		}
 		PublicSSHKeys += string(pub)
 	}
 
 	if len(PublicSSHKeys) == 0 {
-		fmt.Fprintf(os.Stderr, "failed to find/read public SSH key files\n")
-		os.Exit(1)
+		log.Fatalf("failed to find/read public SSH key files\n")
 	}
 
-	fmt.Fprintf(os.Stderr, "%s\n", PublicSSHKeys)
+	log.Printf("%s\n", PublicSSHKeys)
 
-	fmt.Fprintf(os.Stderr, "getting wireguard public key...\n")
+	log.Printf("getting wireguard public key...\n")
 
 	// reading wireguard public key
 	cmd := exec.Command("/usr/bin/sh", "-c", "/usr/bin/wg pubkey < wireguard/private")
 	if out, err := cmd.Output(); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to start wireguard for public-key derivation: %+v\n", err)
+		log.Println("failed to start wireguard for public-key derivation:", err)
 		os.Exit(1)
 	} else if _, err = PublicWireguardKey.UnmarshalText(out); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to parse wireguard key: %+v\n", err)
+		log.Println("failed to parse wireguard key:", err)
 		os.Exit(1)
 	}
 
 	info, err := whois.Get()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to get coordinates: %+v\n", err)
+		log.Println("failed to get coordinates:", err)
 	}
 
 	MyLocation = Location{
@@ -930,15 +926,14 @@ func main() {
 	buf, err := os.ReadFile("pid")
 	if err != nil && os.IsNotExist(err) {
 		if len(os.Args) > 1 {
-			fmt.Fprintf(os.Stderr, "attempted to invoking controller without existing process\n")
-			os.Exit(1)
+			log.Fatalf("attempted to invoking controller without existing process\n")
 		}
 		createPIDFile()
 	} else if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to read PID file: %+v\n", err)
+		log.Println("failed to read PID file:", err)
 		os.Exit(1)
 	} else if pid, err := strconv.Atoi(string(bytes.TrimSpace(buf))); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to read PID file: %+v\n", err)
+		log.Println("failed to read PID file:", err)
 		os.Exit(1)
 	} else {
 		var e1, e2 error
@@ -951,7 +946,7 @@ func main() {
 			// controller mode
 			err := controller()
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "%+v\n", err)
+				log.Println(err)
 				os.Exit(1)
 			}
 			os.Exit(0)
@@ -975,14 +970,13 @@ func main() {
 	llama.Stderr = os.Stderr
 
 	if err = llama.Start(); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to start llama server\n", err)
-		os.Exit(1)
+		log.Fatalln("failed to start llama server", err)
 	}
 
 	go func() {
 		n := 0
 		if err := llama.Wait(); err != nil {
-			fmt.Fprintf(os.Stderr, "llama server failed for some reason: %+v\n", err)
+			log.Println("llama server failed for some reason:", err)
 			n = 1
 		}
 		cancel()
@@ -995,13 +989,13 @@ func main() {
 
 	links, err := network.List(ctx)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to probe network links: %+v\n", err)
+		log.Println("failed to probe network links:", err)
 		os.Exit(1)
 	}
 
 	peers, err := GetPeerInfo()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed getting peers: %+v\n", err)
+		log.Println("failed getting peers:", err)
 		os.Exit(1)
 	}
 
@@ -1022,14 +1016,14 @@ func main() {
 		}()
 		err = Shell(ctx, r)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed writing network configuration to shell: %+v\n", err)
+			log.Println("failed writing network configuration to shell:", err)
 			os.Exit(1)
 		}
 		cancel()
 
 	}
 
-	fmt.Fprintf(os.Stderr, "iterating over %d peers\n", len(peers))
+	log.Printf("iterating over %d peers\n", len(peers))
 
 	for key := range peers {
 		go func(key Key) {
@@ -1042,7 +1036,7 @@ func main() {
 				}
 				err := key.Sync(ctx, UpdatePeer)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "error fething updates: %+v", err)
+					log.Println("error fething updates:", err)
 				}
 			}
 		}(key)
@@ -1056,7 +1050,7 @@ func main() {
 			var k Key
 			_, err := k.UnmarshalText([]byte(branch.ID))
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "failed to parse peer ID: %s\n", branch.ID)
+				log.Printf("failed to parse peer ID: %s\n", branch.ID)
 				continue
 			}
 
@@ -1066,7 +1060,7 @@ func main() {
 
 			bp, ok := branches[k]
 			if !ok {
-				fmt.Fprintf(os.Stderr, "unfound peer: %s\n", k.String())
+				log.Printf("unfound peer: %s\n", k.String())
 				continue
 			}
 			*bp = branch
@@ -1088,7 +1082,7 @@ func main() {
 			} else {
 				slice = append(slice, branch)
 				for _, branch := range branches {
-					fmt.Printf("adding branch: %+v", branch)
+					fmt.Printf("adding branch: %+v\n", branch)
 					slice = append(slice, *branch)
 				}
 				if buf, err := json.Marshal(slice); err != nil {
@@ -1101,7 +1095,7 @@ func main() {
 
 			go func(conn net.Conn, res http.Response) {
 				if err = res.Write(conn); err != nil {
-					fmt.Fprintf(os.Stderr, "error writing request: %+v", err)
+					log.Println("error writing request:", err)
 				}
 				conn.Close()
 			}(conn, res)

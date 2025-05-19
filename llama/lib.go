@@ -7,10 +7,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"strings"
-	"os"
 )
 
 type Message interface {
@@ -113,7 +113,7 @@ func Do(ctx context.Context, messages <-chan Message, tokens chan<- []byte) erro
 	go func() {
 		defer w.Close()
 		if e2 = enc.Encode(body); e2 != io.ErrClosedPipe && e2 != nil {
-			fmt.Fprintf(os.Stderr, "encoding error: %v", e2)
+			log.Println("encoding error:", e2)
 		}
 	}()
 
@@ -147,8 +147,7 @@ func Do(ctx context.Context, messages <-chan Message, tokens chan<- []byte) erro
 			line = bytes.TrimPrefix(line, []byte("data: "))
 			break
 		default:
-			s := fmt.Sprintf("unexpected line from llama-server stream: '%s'", string(line))
-			panic(s)
+			log.Panicln("unexpected line from llama-server stream:", string(line))
 		}
 		if e1 = json.Unmarshal(line, &token); e1 != nil {
 			return e1

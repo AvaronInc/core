@@ -11,6 +11,7 @@ import (
 	"fmt"
 	systemd "github.com/coreos/go-systemd/v22/dbus"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -88,7 +89,7 @@ func Listen(ctx context.Context, ch chan net.Conn, listener net.Listener) {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error accepting connection: %+v\n", err)
+			log.Println("error accepting connection:", err)
 			continue
 		}
 		select {
@@ -148,13 +149,13 @@ func ServeChats(ctx context.Context) {
 				}
 				if e1 != nil {
 					res.StatusCode = http.StatusInternalServerError
-					fmt.Fprintf(os.Stderr, "failed to open pipes: %+v", e1)
+					log.Printf("failed to open pipes: %+v", e1)
 					break
 				}
 				err := cmd.Start()
 				if err != nil {
 					res.StatusCode = http.StatusInternalServerError
-					fmt.Fprintf(os.Stderr, "failed to start ollama: %+v", err)
+					log.Println("failed to start ollama:", err)
 					break
 				}
 				Chats[i].cmd = cmd
@@ -163,7 +164,7 @@ func ServeChats(ctx context.Context) {
 				go func(i int) {
 					err := Chats[i].cmd.Wait()
 					if err != nil {
-						fmt.Fprintf(os.Stderr, "ollama exit error: %+v", err)
+						log.Println("ollama exit error:", err)
 					}
 					Chats[i].cancel()
 				}(i)
@@ -215,7 +216,7 @@ func ServeChats(ctx context.Context) {
 				Chats[i%len(Chats)].cancel()
 				Chats[i%len(Chats)].cmd = nil
 				res.StatusCode = http.StatusInternalServerError
-				fmt.Fprintf(os.Stderr, "failed to write to process: %+v", err)
+				log.Println("failed to write to process:", err)
 				break
 			}
 			Chats[i].w.Close()
@@ -225,7 +226,7 @@ func ServeChats(ctx context.Context) {
 		}
 		go func(conn net.Conn, res http.Response) {
 			if err := res.Write(conn); err != nil {
-				fmt.Fprintf(os.Stderr, "error writing request: %+v", err)
+				log.Println("error writing request:", err)
 			}
 			conn.Close()
 		}(req.conn, res)
@@ -246,22 +247,21 @@ func ServeHTTP(ctx context.Context) {
 		"/etc/letsencrypt/live/isreal.estate/privkey.pem")
 
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to load certificates: %+v", err)
+		log.Println("failed to load certificates:", err)
 	} else if listener, err := tls.Listen("tcp", ":8443", config); err != nil {
-		fmt.Fprintf(os.Stderr, "error starting HTTPS listener: %+v\n", err)
+		log.Println("error starting HTTPS listener:", err)
 	} else {
 		https = make(chan net.Conn)
 		go Listen(ctx, https, listener)
-		fmt.Fprintf(os.Stderr, "listening on %s\n", listener.Addr().String())
+		log.Printf("listening on %s\n", listener.Addr().String())
 	}
 
 	if listener, err = net.Listen("tcp", ":8080"); err != nil {
-		fmt.Fprintf(os.Stderr, "error starting HTTP listener: %+v\n", err)
-		os.Exit(1)
+		log.Fatalln("error starting HTTP listener:", err)
 	} else {
 		http = make(chan net.Conn)
 		go Listen(ctx, http, listener)
-		fmt.Fprintf(os.Stderr, "listening on %s\n", listener.Addr().String())
+		log.Printf("listening on %s\n", listener.Addr().String())
 	}
 
 	// load balancer - connection times out quicker the more connections there are
@@ -282,7 +282,7 @@ func ServeHTTP(ctx context.Context) {
 			// or
 			// (timeout*total) / (timeout*n)
 			d := (time.Duration(n+1) * timeout) / (time.Duration(total + 1))
-			fmt.Fprintf(os.Stderr, "n: %d\n", n)
+			log.Printf("n: %d\n", n)
 			if n > 0 {
 				select {
 				case tokens <- struct{}{}:
@@ -326,7 +326,7 @@ func ServeHTTP(ctx context.Context) {
 			break
 		}
 
-		fmt.Fprintf(os.Stderr, "duration: %20s\n", d)
+		log.Printf("duration: %20s\n", d)
 		t := time.Now().Add(d)
 		conn.SetReadDeadline(t)
 		request, _ := context.WithDeadline(ctx, t)
@@ -359,13 +359,13 @@ func handle(ctx context.Context, conn net.Conn, deadline time.Time) {
 	reader := bufio.NewReader(conn)
 	req, err := http.ReadRequest(reader)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error reading request: %+v\n", err)
+		log.Println("error reading request:", err)
 		goto end
 	} else {
 		res.Request = req
 	}
 
-	fmt.Fprintf(os.Stderr, "%50s %5s: %s\n", conn.RemoteAddr().String(), req.Method, req.URL.Path)
+	log.Printf("%50s %5s: %s\n", conn.RemoteAddr().String(), req.Method, req.URL.Path)
 
 	switch req.URL.Path {
 	case "/api/keys/ssh":
@@ -386,10 +386,10 @@ func handle(ctx context.Context, conn net.Conn, deadline time.Time) {
 			res.StatusCode = http.StatusMethodNotAllowed
 			break
 		}
-		fmt.Fprintf(os.Stderr, "pairing with %s\n", conn.RemoteAddr().String())
+		log.Printf("pairing with %s\n", conn.RemoteAddr().String())
 		// check content-length
 		if l := req.ContentLength; l < 44 || l > 44+1 {
-			fmt.Fprintf(os.Stderr, "Request Content-Length (%d) != %d +/- 1/0\n", l, 44)
+			log.Printf("Request Content-Length (%d) != %d +/- 1/0\n", l, 44)
 			res.StatusCode = http.StatusBadRequest
 			break
 		}
@@ -400,12 +400,12 @@ func handle(ctx context.Context, conn net.Conn, deadline time.Time) {
 		var key Key
 		_, err := io.ReadFull(r, key[:])
 		if err != nil && err != io.EOF {
-			fmt.Fprintf(os.Stderr, "failed to public key: %+v\n", err)
+			log.Println("failed to public key:", err)
 			res.StatusCode = http.StatusBadRequest
 			break
 		}
 
-		fmt.Fprintf(os.Stderr, "got buffer! %s\n", key.String())
+		log.Printf("got buffer! %s\n", key.String())
 
 		files, err := os.ReadDir("pending")
 		if err == nil {
@@ -414,7 +414,7 @@ func handle(ctx context.Context, conn net.Conn, deadline time.Time) {
 			// fine
 			err := os.Mkdir("pending", 0700)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "failed to make 'pending' dir: %+v\n", err)
+				log.Println("failed to make 'pending' dir:", err)
 				res.StatusCode = http.StatusInternalServerError
 				break
 			}
@@ -431,7 +431,7 @@ func handle(ctx context.Context, conn net.Conn, deadline time.Time) {
 			}
 
 			if match {
-				fmt.Fprintf(os.Stderr, "case insensitive, matching pending link: %s & %s - rejecting & deleting\n", key.String(), files[i].Name())
+				log.Printf("case insensitive, matching pending link: %s & %s - rejecting & deleting\n", key.String(), files[i].Name())
 				err := os.Remove(filepath.Join("pending", files[i].Name()))
 				if err != nil {
 					// something nasty is going on
@@ -444,7 +444,7 @@ func handle(ctx context.Context, conn net.Conn, deadline time.Time) {
 
 		err = os.MkdirAll(fmt.Sprintf("pending/%s", key.String()), 0700)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed to make pending link dir: %+v\n", err)
+			log.Println("failed to make pending link dir:", err)
 			res.StatusCode = http.StatusInternalServerError
 			break
 		}
@@ -468,7 +468,7 @@ func handle(ctx context.Context, conn net.Conn, deadline time.Time) {
 
 		dec := json.NewDecoder(req.Body)
 		if t, _ := dec.Token(); t != json.Delim('[') {
-			fmt.Fprintf(os.Stderr, "error reading services '[' for restart: %+v", err)
+			log.Println("error reading services '[' for restart:", err)
 			res.StatusCode = http.StatusInternalServerError
 			break
 		}
@@ -481,7 +481,7 @@ func handle(ctx context.Context, conn net.Conn, deadline time.Time) {
 		go func() {
 			e1 = llama.Do(ctx, messages, tokens)
 			if e1 != nil {
-				fmt.Fprintf(os.Stderr, "error forwarding request to llama: %+v", e1)
+				log.Printf("error forwarding request to llama:", e1)
 			}
 		}()
 
@@ -501,7 +501,7 @@ func handle(ctx context.Context, conn net.Conn, deadline time.Time) {
 		}
 
 		if e2 != nil {
-			fmt.Fprintf(os.Stderr, "error decoding message in chat request: %+v", err)
+			log.Println("error decoding message in chat request:", err)
 			res.StatusCode = http.StatusBadRequest
 			break
 		}
@@ -583,7 +583,7 @@ func handle(ctx context.Context, conn net.Conn, deadline time.Time) {
 		var conn *systemd.Conn
 		conn, err = systemd.NewSystemConnectionContext(ctx)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed connecting to systemd: %+v", err)
+			log.Println("failed connecting to systemd:", err)
 			res.StatusCode = http.StatusInternalServerError
 			break
 		}
@@ -591,7 +591,7 @@ func handle(ctx context.Context, conn net.Conn, deadline time.Time) {
 
 		dec := json.NewDecoder(req.Body)
 		if t, _ := dec.Token(); t != json.Delim('[') {
-			fmt.Fprintf(os.Stderr, "error reading services '[' for restart: %+v", err)
+			log.Println("error reading services '[' for restart:", err)
 			res.StatusCode = http.StatusInternalServerError
 			break
 		}
@@ -616,13 +616,13 @@ func handle(ctx context.Context, conn net.Conn, deadline time.Time) {
 		}
 
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error reading services for restart: %+v", err)
+			log.Println("error reading services for restart:", err)
 			res.StatusCode = http.StatusInternalServerError
 			break
 		}
 
 		if t, _ := dec.Token(); t != json.Delim(']') {
-			fmt.Fprintf(os.Stderr, "error reading services ']' for restart: %+v", err)
+			log.Println("error reading services ']' for restart:", err)
 			res.StatusCode = http.StatusInternalServerError
 			break
 		}
@@ -642,7 +642,7 @@ func handle(ctx context.Context, conn net.Conn, deadline time.Time) {
 		if _, err := os.Stat(path); err != nil {
 			path = "/tmp/public/"
 		}
-		fmt.Fprintf(os.Stderr, "serving file: %s\n", path)
+		log.Printf("serving file: %s\n", path)
 		http.ServeFile(rw, req, path)
 		res.Body = io.NopCloser(rw.Buffer)
 	}
@@ -651,13 +651,13 @@ end:
 	conn.SetWriteDeadline(deadline)
 	defer conn.Close()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error processing request: %+v", err)
+		log.Println("error processing request:", err)
 	}
 	res.Status = http.StatusText(res.StatusCode)
 
 	err = res.Write(conn)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error writing request: %+v", err)
+		log.Println("error writing request:", err)
 		return
 	}
 }
