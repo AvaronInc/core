@@ -19,19 +19,19 @@ type Message interface {
 }
 
 type Request struct {
-	Prompt   string          `json:"prompt"`
-	Model    string          `json:"model"`
-	Stream   bool            `json:"stream"`
+	Prompt string `json:"prompt"`
+	Model  string `json:"model"`
+	Stream bool   `json:"stream"`
 }
 
 type Token struct {
-	Index   int          `json:"index"`
-	Content  string          `json:"content"`
-	Tokens []int `json:"tokens"`
-	Stop bool `json:"stop"`
-	Slot int `json:"id_slot"`
-	Predicted int `json:"tokens_predicted"`
-	Evaluated int `json:"tokens_evaluated"`
+	Index     int    `json:"index"`
+	Content   string `json:"content"`
+	Tokens    []int  `json:"tokens"`
+	Stop      bool   `json:"stop"`
+	Slot      int    `json:"id_slot"`
+	Predicted int    `json:"tokens_predicted"`
+	Evaluated int    `json:"tokens_evaluated"`
 }
 
 /*
@@ -92,7 +92,7 @@ func Do(ctx context.Context, messages <-chan Message, tokens chan<- []byte) erro
 
 	body := Request{
 		Prompt: prompt.String(),
-		Model: "mixtral.gguf",
+		Model:  "mixtral.gguf",
 		Stream: true,
 	}
 
@@ -127,11 +127,11 @@ func Do(ctx context.Context, messages <-chan Message, tokens chan<- []byte) erro
 	}
 
 	/*
-	data: {"index":0,"content":" I","tokens":[315],"stop":false,"id_slot":-1,"tokens_predicted":152,"tokens_evaluated":9}
+		data: {"index":0,"content":" I","tokens":[315],"stop":false,"id_slot":-1,"tokens_predicted":152,"tokens_evaluated":9}
 
-	data: {"index":0,"content":"'","tokens":[28742],"stop":false,"id_slot":-1,"tokens_predicted":153,"tokens_evaluated":9}
+		data: {"index":0,"content":"'","tokens":[28742],"stop":false,"id_slot":-1,"tokens_predicted":153,"tokens_evaluated":9}
 
-	data: {"index":0,"content":"m","tokens":[28719],"stop":false,"id_slot":-1,"tokens_predicted":154,"tokens_evaluated":9}
+		data: {"index":0,"content":"m","tokens":[28719],"stop":false,"id_slot":-1,"tokens_predicted":154,"tokens_evaluated":9}
 
 	*/
 
@@ -153,7 +153,7 @@ func Do(ctx context.Context, messages <-chan Message, tokens chan<- []byte) erro
 			return e1
 		}
 		select {
-		case tokens<-[]byte(token.Content):
+		case tokens <- []byte(token.Content):
 		case <-ctx.Done():
 			return nil
 		}
