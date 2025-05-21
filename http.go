@@ -352,6 +352,10 @@ func handle(ctx context.Context, conn net.Conn, deadline time.Time) {
 			log.Println("error forwarding request to llama:", err)
 			res.StatusCode = http.StatusInternalServerError
 			break
+		} else if lres.StatusCode < 200 || lres.StatusCode >= 300 {
+			log.Println("error forwarding request to llama:", err)
+			res.StatusCode = http.StatusInternalServerError
+			break
 		}
 
 		var w io.WriteCloser
