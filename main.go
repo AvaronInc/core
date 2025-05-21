@@ -984,7 +984,6 @@ func main() {
 		os.Exit(n)
 	}()
 
-	go ServeChats(ctx)
 	go ServeHTTP(ctx)
 
 	links, err := network.List(ctx)
