@@ -3,6 +3,7 @@ package main
 import (
 	network "avaron/net"
 	"avaron/sys/mem"
+	"avaron/llama"
 	"avaron/whois"
 	"bufio"
 	"bytes"
@@ -66,6 +67,212 @@ func (k Key) AsPath() string {
 func truncate(f float64, precision int) float64 {
 	shift := math.Pow(10, float64(precision))
 	return math.Trunc(f*shift) / shift
+}
+
+const HEALTH_PROMPT = `
+You are a Linux Network Engineer. Your job is to diagnose network configurations.
+If the information you're given is indicative of a HEALTHY network configuration, say HEALTHY.
+If it's UNHEALTHY, say UNHEALTHY, followed by the command you'd like to run for further diagnostics.
+
+Here is an example:
+HEALTHY
+Everything looks good
+
+Here is another example:
+UNHEALTHY
+$ ip -br link show
+Let's run "ip -br link show" to see more about the links
+
+And another:
+HEALTHY
+docker0 is down. who gives a shit
+
+And another:
+UNHEALTHY
+$ ping 8.8.8.8
+there's not enough information here. let's try running "ping 8.8.8.8" to confirm that we're able to access the internet.
+
+`
+
+func HealthCheck(ctx context.Context) (messages []Message, err error) {
+	r, w := io.Pipe()
+	go func() {
+		err = network.ListBrief(ctx, w)
+	}()
+
+	buf, _ := io.ReadAll(r)
+	if err != nil {
+		return
+	}
+
+	messages = []Message{
+		{
+			Content: fmt.Sprintf("%s\nthe following is the output of ip -br addr show: %s\n", HEALTH_PROMPT, string(buf)),
+			Role: "user",
+		},
+	}
+
+	for {
+		builder := &strings.Builder{}
+		for _, m := range messages{
+			switch m.Role {
+			case "user":
+				fmt.Fprintf(builder, "[INST]%s[/INST]", m.Content)
+			default:
+				fmt.Fprintf(builder, "%s", m.Content)
+			}
+		}
+		prompt := builder.String()
+		buf, err = json.Marshal(llama.Request{
+			Prompt: prompt,
+			Model:  "mixtral.gguf",
+			Stream: true,
+		})
+
+		if err != nil {
+			log.Println("failed marshalling:", err)
+			continue
+		}
+
+		var (
+			req *http.Request
+			res *http.Response
+		)
+
+		req, err = http.NewRequestWithContext(ctx, "POST", "http://localhost/completions", bytes.NewReader(buf))
+		if err != nil {
+			log.Println("error forming llama request:", err)
+			res.StatusCode = http.StatusInternalServerError
+			break
+		}
+
+		res, err = llama.Client.Do(req)
+		if err != nil {
+			log.Println("error forwarding request to llama:", err)
+			res.StatusCode = http.StatusInternalServerError
+			break
+		} else if res.StatusCode < 200 || res.StatusCode >= 300 {
+			log.Println("error forwarding request to llama:", err)
+			res.StatusCode = http.StatusInternalServerError
+			break
+		}
+		log.Println("got response - starting scanning:", res)
+
+		r, w = io.Pipe()
+		var token llama.Token
+		scanner := bufio.NewScanner(res.Body)
+
+		go func() {
+			defer w.Close()
+			for scanner.Scan() {
+				line := scanner.Text()
+				switch {
+				case len(line) == 0:
+					continue
+				case strings.HasPrefix(line, "data: "):
+					line = strings.TrimPrefix(line, "data: ")
+					break
+				default:
+					log.Panicln("unexpected line from llama-server stream:", line)
+				}
+				if err = json.Unmarshal([]byte(line), &token); err != nil {
+					log.Panicln("error marshalling llama json:", err, line)
+				}
+				_, err = w.Write([]byte(token.Content))
+				if err != nil {
+					log.Println("error writing llama token to response body:", err, line)
+				}
+
+			}
+		}()
+
+		buf, _ = io.ReadAll(io.TeeReader(r, os.Stderr))
+		prompt = string(buf)
+		log.Println("got full response:", prompt)
+		messages = append(messages, Message{
+			Role: "assistant",
+			Content: prompt,
+		})
+
+		var i int
+		if i = strings.Index(prompt, "\n$ "); i == -1 || strings.Index(prompt, "UNHEALTHY") == -1 {
+			break
+		}
+
+		shell := prompt[i+3:]
+		if i = strings.Index(shell, "\n"); i != -1 {
+			shell = shell[:i]
+		}
+
+		shell = strings.TrimSpace(shell)
+		if shell == "" {
+			break
+		}
+		log.Println("running suggested command:", shell)
+
+		out, err := exec.CommandContext(ctx, "/bin/sh", "-c", shell).CombinedOutput()
+		if err != nil {
+			log.Printf("failed to run ai suggestion: %+v\n", err)
+			break
+		}
+
+		log.Printf("output from suggested command:\n%s", string(out))
+
+		messages = append(messages, Message{
+			Role: "user",
+			Content: string(out),
+		})
+	}
+	return
+}
+
+var HealthCheckerRequests = make(chan io.WriteCloser)
+
+func HealthChecker(ctx context.Context) {
+	ticker := time.NewTicker(time.Second*3)
+	messages :=  make(map[time.Time][]Message)
+	var (
+		t time.Time
+		channel, ch chan []Message
+		ticks <-chan time.Time
+	)
+
+	channel = make(chan []Message)
+	ticks = ticker.C
+
+	for {
+		select{
+		case w := <- HealthCheckerRequests:
+			enc := json.NewEncoder(w)
+			err := enc.Encode(messages)
+			if err != nil {
+				log.Println("error encoding:", err)
+			}
+			w.Close()
+		case <-ticks:
+			ticks, ch = nil, channel
+			t = time.Now()
+			log.Println("HealthChecker tick")
+			go func() {
+				messages, err := HealthCheck(ctx)
+				if err != nil {
+					log.Println("HealthCheck error:", err)
+				}
+				select {
+				case ch<-messages:
+				case <-ctx.Done():
+				}
+			}()
+		case m := <-ch:
+			ticks, ch = ticker.C, nil
+			if m != nil {
+				log.Printf("received %d messages: %+v\n", len(m), messages)
+				messages[t] = m
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 func GenerateLinkLocal(k1, k2 *Key) (n1, n2 net.IPNet) {
@@ -985,6 +1192,7 @@ func main() {
 	}()
 
 	go ServeHTTP(ctx)
+	go HealthChecker(ctx)
 
 	links, err := network.List(ctx)
 	if err != nil {

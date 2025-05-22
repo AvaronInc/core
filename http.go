@@ -290,6 +290,21 @@ func handle(ctx context.Context, conn net.Conn, deadline time.Time) {
 		}
 
 		return
+	case "/api/logs":
+		if req.Method != "GET" {
+			res.StatusCode = http.StatusMethodNotAllowed
+			break
+		}
+		var w io.WriteCloser
+		res.Body, w = io.Pipe()
+		select{
+		case HealthCheckerRequests<-w:
+		case <-ctx.Done():
+			w.Close()
+		}
+		res.Header = http.Header{
+			"Content-Type": []string{"application/json"},
+		}
 	case "/api/completions":
 		if req.Method != "POST" {
 			res.StatusCode = http.StatusMethodNotAllowed
