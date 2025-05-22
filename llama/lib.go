@@ -2,8 +2,12 @@ package llama
 
 import (
 	"context"
+	"log"
 	"net"
 	"net/http"
+	"os"
+	"os/exec"
+	"time"
 )
 
 type Request struct {
@@ -23,6 +27,25 @@ type Token struct {
 }
 
 var (
+	Client http.Client
+)
+
+func init() {
+	host := os.Getenv("LLAMA_SERVER")
+	log.Println("host", host)
+	if  host != "" {
+		Client = http.Client{
+			Transport: &http.Transport{
+				DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
+					return net.Dial("tcp", host)
+				},
+			},
+		}
+		return
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
 	Client = http.Client{
 		Transport: &http.Transport{
 			DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
@@ -30,4 +53,31 @@ var (
 			},
 		},
 	}
-)
+	os.Remove("llama.sock")
+	llama := exec.CommandContext(ctx, "llama-server", "--host", "llama.sock", "--model", "mixtral.gguf")
+	llama.Env = append(os.Environ(),
+		"OLLAMA_NUM_GPU=999",
+		"ZES_ENABLE_SYSMAN=1",
+		"SYCL_CACHE_PERSISTENT=1",
+		"OLLAMA_KEEP_ALIVE=10m",
+		"SYCL_PI_LEVEL_ZERO_USE_IMMEDIATE_COMMANDLISTS=1")
+
+	llama.Stdout = os.Stderr
+	llama.Stderr = os.Stderr
+
+	var err error
+	if err = llama.Start(); err != nil {
+		log.Fatalln("failed to start llama server", err)
+	}
+
+	go func() {
+		n := 0
+		if err := llama.Wait(); err != nil {
+			log.Println("llama server failed for some reason:", err)
+			n = 1
+		}
+		cancel()
+		time.Sleep(5 * time.Second)
+		os.Exit(n)
+	}()
+}

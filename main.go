@@ -1063,6 +1063,11 @@ func main() {
 		log.Fatalf("failed to parse %s's UID '%s' - %+v\n", base, user.Uid, err)
 	}
 
+	err = syscall.Setuid(uid)
+	if err != nil {
+		log.Fatalf("failed switching to UID %d\n", uid)
+	}
+
 	puid := os.Getuid()
 	if puid != 0 && puid != uid {
 		log.Fatalf("%s was invoked by UID %d, however, the %s user has UID %d\n", os.Args[0], puid, filepath.Base(os.Args[0]), uid)
@@ -1162,34 +1167,7 @@ func main() {
 		}
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-
-	os.Remove("llama.sock")
-	llama := exec.Command("llama-server", "--host", "llama.sock", "--model", "mixtral.gguf")
-	llama.Env = append(os.Environ(),
-		"OLLAMA_NUM_GPU=999",
-		"ZES_ENABLE_SYSMAN=1",
-		"SYCL_CACHE_PERSISTENT=1",
-		"OLLAMA_KEEP_ALIVE=10m",
-		"SYCL_PI_LEVEL_ZERO_USE_IMMEDIATE_COMMANDLISTS=1")
-
-	llama.Stdout = os.Stderr
-	llama.Stderr = os.Stderr
-
-	if err = llama.Start(); err != nil {
-		log.Fatalln("failed to start llama server", err)
-	}
-
-	go func() {
-		n := 0
-		if err := llama.Wait(); err != nil {
-			log.Println("llama server failed for some reason:", err)
-			n = 1
-		}
-		cancel()
-		time.Sleep(5 * time.Second)
-		os.Exit(n)
-	}()
+	ctx, _ := context.WithCancel(context.Background())
 
 	go ServeHTTP(ctx)
 	go HealthChecker(ctx)
