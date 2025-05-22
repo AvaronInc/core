@@ -478,7 +478,9 @@ func List(ctx context.Context) (m map[string]*Interface, err error) {
 	return m, nil
 }
 
-func ListBrief(ctx context.Context, w io.Writer) (err error) {
+func ListBrief(ctx context.Context, w io.WriteCloser) (err error) {
+	defer w.Close()
+
 	cmd := exec.CommandContext(ctx, "sudo", "/usr/sbin/ip", "-br", "address", "show")
 	cmd.Stdout = w
 	return cmd.Run()
