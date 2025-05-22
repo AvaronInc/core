@@ -68,7 +68,7 @@ func ServeHTTP(ctx context.Context) {
 	var (
 		err         error
 		listener    net.Listener
-		conns chan net.Conn
+		conns chan net.Conn = make(chan net.Conn )
 		config      = &tls.Config{
 			Certificates: make([]tls.Certificate, 1),
 		}
@@ -134,29 +134,38 @@ func ServeHTTP(ctx context.Context) {
 	}()
 
 	for conn := range conns {
-		t := time.Now().Add(<-durations)
-		conn.SetReadDeadline(t)
-		request, cancel := context.WithDeadline(ctx, t)
+		select {
+		case <-tokens:
+			// borrow token
+		case <-ctx.Done():
+			return
+		}
 		go func(conn net.Conn) {
-			defer cancel()
-			select {
-			case <-tokens:
-				// borrow token
-			case <-request.Done():
-				return
+			t := time.Now().Add(<-durations)
+			conn.SetReadDeadline(t)
+
+			reader := bufio.NewReader(conn)
+
+			if req, err := http.ReadRequest(reader); err != nil {
+				log.Println("error reading request:", err)
+			} else {
+				log.Printf("%-24s %5s: %s\n", conn.RemoteAddr().String(), req.Method, req.URL.Path)
+				ctx, cancel := context.WithDeadline(ctx, t)
+				defer cancel()
+				handle(ctx, req, conn)
 			}
-			handle(request, conn, t)
+
 			select {
 			case tokens <- struct{}{}:
 				// return token
-			case <-request.Done():
+			case <-ctx.Done():
 				return
 			}
 		}(conn)
 	}
 }
 
-func handle(ctx context.Context, conn net.Conn, deadline time.Time) {
+func handle(ctx context.Context, req *http.Request, conn net.Conn) {
 	var res = http.Response{
 		Proto:      "HTTP/1.1",
 		ProtoMajor: 1,
@@ -164,16 +173,7 @@ func handle(ctx context.Context, conn net.Conn, deadline time.Time) {
 		StatusCode: http.StatusOK,
 	}
 
-	reader := bufio.NewReader(conn)
-	req, err := http.ReadRequest(reader)
-	if err != nil {
-		log.Println("error reading request:", err)
-		goto end
-	} else {
-		res.Request = req
-	}
-
-	log.Printf("%50s %5s: %s\n", conn.RemoteAddr().String(), req.Method, req.URL.Path)
+	var err error
 
 	switch req.URL.Path {
 	case "/api/keys/ssh":
@@ -507,13 +507,10 @@ func handle(ctx context.Context, conn net.Conn, deadline time.Time) {
 		if _, err := os.Stat(path); err != nil {
 			path = "public/index.html"
 		}
-		log.Printf("serving file: %s\n", path)
 		http.ServeFile(rw, req, path)
 		res.Body = io.NopCloser(rw.Buffer)
 	}
 
-end:
-	conn.SetWriteDeadline(deadline)
 	defer conn.Close()
 	if err != nil {
 		log.Println("error processing request:", err)
