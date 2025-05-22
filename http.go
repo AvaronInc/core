@@ -68,7 +68,7 @@ func ServeHTTP(ctx context.Context) {
 	var (
 		err         error
 		listener    net.Listener
-		http, https chan net.Conn
+		conns chan net.Conn
 		config      = &tls.Config{
 			Certificates: make([]tls.Certificate, 1),
 		}
@@ -81,16 +81,14 @@ func ServeHTTP(ctx context.Context) {
 	} else if listener, err := tls.Listen("tcp", ":8443", config); err != nil {
 		log.Println("error starting HTTPS listener:", err)
 	} else {
-		https = make(chan net.Conn)
-		go Listen(ctx, https, listener)
+		go Listen(ctx, conns, listener)
 		log.Printf("listening on %s\n", listener.Addr().String())
 	}
 
 	if listener, err = net.Listen("tcp", ":8080"); err != nil {
 		log.Fatalln("error starting HTTP listener:", err)
 	} else {
-		http = make(chan net.Conn)
-		go Listen(ctx, http, listener)
+		go Listen(ctx, conns, listener)
 		log.Printf("listening on %s\n", listener.Addr().String())
 	}
 
@@ -102,7 +100,7 @@ func ServeHTTP(ctx context.Context) {
 
 	var (
 		tokens    = make(chan struct{})
-		deadlines = make(chan time.Duration)
+		durations = make(chan time.Duration)
 	)
 
 	go func() {
@@ -112,14 +110,13 @@ func ServeHTTP(ctx context.Context) {
 			// or
 			// (timeout*total) / (timeout*n)
 			d := (time.Duration(n+1) * timeout) / (time.Duration(total + 1))
-			log.Printf("n: %d\n", n)
 			if n > 0 {
 				select {
 				case tokens <- struct{}{}:
 					n--
 				case <-tokens:
 					n++
-				case deadlines <- d:
+				case durations <- d:
 				case <-ctx.Done():
 					return
 				}
@@ -127,7 +124,7 @@ func ServeHTTP(ctx context.Context) {
 				select {
 				case <-tokens:
 					n++
-				case deadlines <- d:
+				case durations <- d:
 				case <-ctx.Done():
 					return
 				}
@@ -136,31 +133,12 @@ func ServeHTTP(ctx context.Context) {
 		}
 	}()
 
-	var (
-		d    time.Duration
-		conn net.Conn
-		ok   bool
-	)
-
-	for {
-		select {
-		case conn, ok = <-http:
-		case conn, ok = <-https:
-		}
-
-		if !ok {
-			break
-		}
-
-		if d, ok = <-deadlines; !ok {
-			break
-		}
-
-		log.Printf("duration: %20s\n", d)
-		t := time.Now().Add(d)
+	for conn := range conns {
+		t := time.Now().Add(<-durations)
 		conn.SetReadDeadline(t)
-		request, _ := context.WithDeadline(ctx, t)
-		go func() {
+		request, cancel := context.WithDeadline(ctx, t)
+		go func(conn net.Conn) {
+			defer cancel()
 			select {
 			case <-tokens:
 				// borrow token
@@ -174,7 +152,7 @@ func ServeHTTP(ctx context.Context) {
 			case <-request.Done():
 				return
 			}
-		}()
+		}(conn)
 	}
 }
 
@@ -520,9 +498,14 @@ func handle(ctx context.Context, conn net.Conn, deadline time.Time) {
 		}
 
 		path := filepath.Clean(req.URL.Path)
-		path = filepath.Join("/tmp/public/", path)
+		if dir := os.Getenv("SERVE_DIR"); dir == "" {
+			path = filepath.Join("/tmp/public/", path)
+		} else {
+			path = filepath.Join(dir, path)
+		}
+
 		if _, err := os.Stat(path); err != nil {
-			path = "/tmp/public/"
+			path = "public/index.html"
 		}
 		log.Printf("serving file: %s\n", path)
 		http.ServeFile(rw, req, path)
