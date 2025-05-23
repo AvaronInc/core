@@ -44,6 +44,10 @@ func Listen(ctx context.Context, ch chan net.Conn, listener net.Listener) {
 	}
 }
 
+var (
+	ServeDirectory string
+)
+
 func ServeHTTP(ctx context.Context) {
 	var (
 		err         error
@@ -53,6 +57,13 @@ func ServeHTTP(ctx context.Context) {
 			Certificates: make([]tls.Certificate, 1),
 		}
 	)
+
+	if s := os.Getenv("SERVE_DIR"); s != "" {
+		ServeDirectory = s
+	} else {
+		ServeDirectory = "/tmp/public"
+	}
+
 	config.Certificates[0], err = tls.LoadX509KeyPair("/etc/letsencrypt/live/isreal.estate/fullchain.pem",
 		"/etc/letsencrypt/live/isreal.estate/privkey.pem")
 
@@ -134,8 +145,6 @@ func ServeHTTP(ctx context.Context) {
 				ctx, cancel := context.WithDeadline(ctx, t)
 				defer cancel()
 
-				log.Printf("%-24s %5s: %s\n", conn.RemoteAddr().String(), req.Method, req.URL.Path)
-
 				res := http.Response{
 					Proto:      "HTTP/1.1",
 					ProtoMajor: 1,
@@ -148,7 +157,7 @@ func ServeHTTP(ctx context.Context) {
 
 				res.Status = http.StatusText(res.StatusCode)
 
-				log.Printf("%-24s %5s %d %s: %s\n", conn.RemoteAddr().String(), req.Method, res.StatusCode, res.Status, req.URL.Path)
+				log.Printf("%-24s %7s %-24s - %d(%s)\n", conn.RemoteAddr().String(), req.Method, req.URL.Path, res.StatusCode, res.Status)
 				if err = res.Write(conn); err != nil {
 					log.Println("error writing request:", err)
 					return
@@ -459,27 +468,36 @@ func handle(ctx context.Context, req *http.Request, conn net.Conn) (code int, he
 			log.Println("error reading services ']' for restart:", err)
 			return http.StatusInternalServerError, nil, nil
 		}
-
+	case "", "/":
+		code = http.StatusMovedPermanently
+		header = http.Header{
+			"Location": []string{"/dashboard/"},
+		}
+		return
 	default:
 		if req.Method != "GET" {
 			return http.StatusNotFound, nil, nil
 		}
 
-		dir := os.Getenv("SERVE_DIR")
-		if dir == "" {
-			dir = "/tmp/public/"
-		}
+		path := filepath.Join(ServeDirectory, filepath.Clean(req.URL.Path))
 
-		path := filepath.Join(dir, filepath.Clean(req.URL.Path))
-
-		if info, err := os.Stat(path); err != nil || info.IsDir() {
-			path = filepath.Join(dir, "index.html")
+		if strings.HasSuffix(req.URL.Path, "/") {
+			path = filepath.Join(ServeDirectory, filepath.Clean(req.URL.Path), "index.html")
+		} else if info, err := os.Stat(path); err != nil {
+			return http.StatusNotFound, nil, nil
+		} else if info.IsDir() {
+			code = http.StatusMovedPermanently
+			header = http.Header{
+				"Location": []string{req.URL.Path+"/"},
+			}
+			return
 		}
 
 		if r, err = os.Open(path); err != nil {
-			log.Println(err)
+			log.Println("error openning:", err)
 			return http.StatusInternalServerError, nil, nil
 		}
+
 		header = http.Header{
 			"Content-Type": []string{mime.TypeByExtension(filepath.Ext(path))},
 		}

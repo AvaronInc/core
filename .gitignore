@@ -1,2 +1,9 @@
 avaron*
 Makefile
+
+public/*.js
+public/*/*.js
+public/*.mjs
+public/*/*.mjs
+
+node_modules

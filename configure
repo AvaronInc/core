@@ -2,12 +2,23 @@
 
 PREFIX=""
 PORT=443
+ESCFLAGS=
+ESLFLAGS=
+
+react=react
+environment=development
 
 for arg; do
 	case "$arg" in
 	GO=*)             GO="${arg##*=}";;
 	--prefix=*) PREFIX="${arg##*=}"; echo "unimplented: $arg" 1>&2; exit 1;;
 	--port=*) PORT="${arg##*=}";;
+	ESC=*)           ESC="${arg##*=}";;
+	ESL=*)           ESL="${arg##*=}";;
+	ESCFLAGS=*) ESCFLAGS="${arg##*=}";;
+	ESLFLAGS=*) ESLFLAGS="${arg##*=}";;
+	--production) environment=production;;
+	--development) environment=development;;
 	*) echo "unrecognized option: $arg" 1>&2; exit 1
 	esac
 done
@@ -62,6 +73,52 @@ if ! GO_FILES="$(go_files | tr '\n' ' ')"; then
 	exit 1
 fi
 
+if [ -n "$NPM" ]; then
+	: # no-op
+elif NPM=$(resolve npm); then
+	: # no-op
+else
+	printf "%s: failed to find npm\n" "${0##*/}" >&2
+	exit 1
+fi
+
+if [ -n "$ESC" ]; then
+	: # no-op
+elif ESC=$(resolve esbuild); then
+	: # no-op
+else
+	printf "%s: failed to find esbuild\n" "${0##*/}" >&2
+	exit 1
+fi
+
+if [ -n "$ESCFLAGS" ]; then
+	: # no-op
+else
+	case "$ESC" in
+	esbuild) ESCFLAGS="";;
+	esac
+fi
+
+if [ -n "$ESL" ]; then
+	: # no-op
+else
+	ESL="$ESC"
+fi
+
+if [ -n "$ESLFLAGS" ]; then
+	: # no-op
+else
+	case "$environment" in
+	production) ESLFLAGS="--minify --bundle";;
+	development) ESLFLAGS="--sourcemap --bundle";;
+	esac
+fi
+
+
+ESLFLAGS="$ESLFLAGS --alias:react=preact/compat"
+ESLFLAGS="$ESLFLAGS --alias:react-dom=preact/compat"
+ESLFLAGS="$ESLFLAGS --alias:react-dom/client=preact/compat/client"
+
 cat - "in.mk" > Makefile << EOF
 .POSIX:
 
@@ -72,5 +129,11 @@ GO=$GO
 GO_FILES=$GO_FILES
 
 PORT=$PORT
+
+NPM=$NPM
+ESC=$ESC
+ESL=$ESL
+ESCFLAGS=$ESCFLAGS
+ESLFLAGS=$ESLFLAGS
 
 EOF

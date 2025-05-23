@@ -1,4 +1,37 @@
-build: $(BIN) $(BIN).service $(BIN).rules
+.SUFFIXES: .jsx .mjs .js
+
+.jsx.mjs:
+	$(ESC) $(ESCFLAGS) $< > $@ || (rm -f $@; exit 1)
+
+.mjs.js:
+	$(ESL) $(ESLFLAGS) $< > $@ || (rm -f $@; exit 1)
+
+SRC=\
+	public/addressing/index.js \
+	public/aim/index.js \
+	public/containers/index.js \
+	public/dashboard/index.js \
+	public/devices/index.js \
+	public/dns/index.js \
+	public/firewall/index.js \
+	public/logs/index.js \
+	public/security/index.js \
+	public/services/index.js \
+	public/settings/index.js \
+	public/storage/index.js \
+	public/topology/index.js \
+	public/version-control/index.js
+
+build: \
+	$(SRC) \
+	$(BIN).service \
+	$(BIN).rules \
+	$(BIN)
+
+serve: build
+	./avaron
+
+$(SRC): public/frame.mjs
 
 $(BIN): $(GO_FILES)
 	go build
@@ -8,6 +41,9 @@ run: build
 
 $(BIN).service: in.service Makefile
 	sed 's,@PREFIX,$(PREFIX),g; s,@BIN,$(BIN),g' in.service > $@
+
+node_modules: package.json
+	$(NPM) i && touch -c node_modules
 
 $(BIN).rules: in.rules Makefile
 	sed 's,@BIN,$(BIN),g' in.rules > $@
@@ -48,7 +84,7 @@ restart:
 
 clean:
 	go clean
+	rm -f $(BIN).service public/*.js public/*.mjs  public/*/*.js public/*/*.mjs
 
-nuke:
-	go clean
-	rm -f Makefile $(BIN).service
+nuke: clean
+	rm -f Makefile
