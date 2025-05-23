@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"mime"
 	systemd "github.com/coreos/go-systemd/v22/dbus"
 	"io"
 	"log"
@@ -23,27 +24,6 @@ import (
 type Message struct {
 	Content string `json:"content"`
 	Role    string `json:"role"`
-}
-
-type ResponseWriter struct {
-	*http.Response
-	*bytes.Buffer
-}
-
-func (rw ResponseWriter) Write(buf []byte) (int, error) {
-	return rw.Buffer.Write(buf)
-}
-
-func (rw ResponseWriter) WriteHeader(status int) {
-	rw.StatusCode = status
-}
-
-func (rw ResponseWriter) Header() http.Header {
-	res := rw.Response
-	if res.Header == nil {
-		res.Header = make(http.Header)
-	}
-	return res.Header
 }
 
 func Listen(ctx context.Context, ch chan net.Conn, listener net.Listener) {
@@ -141,6 +121,8 @@ func ServeHTTP(ctx context.Context) {
 			return
 		}
 		go func(conn net.Conn) {
+			defer conn.Close()
+
 			t := time.Now().Add(<-durations)
 			conn.SetReadDeadline(t)
 
@@ -149,10 +131,28 @@ func ServeHTTP(ctx context.Context) {
 			if req, err := http.ReadRequest(reader); err != nil {
 				log.Println("error reading request:", err)
 			} else {
-				log.Printf("%-24s %5s: %s\n", conn.RemoteAddr().String(), req.Method, req.URL.Path)
 				ctx, cancel := context.WithDeadline(ctx, t)
 				defer cancel()
-				handle(ctx, req, conn)
+
+				log.Printf("%-24s %5s: %s\n", conn.RemoteAddr().String(), req.Method, req.URL.Path)
+
+				res := http.Response{
+					Proto:      "HTTP/1.1",
+					ProtoMajor: 1,
+					ProtoMinor: 1,
+				}
+				res.StatusCode, res.Header, res.Body = handle(ctx, req, conn)
+				if err != nil {
+					log.Println("error processing request:", err)
+				}
+
+				res.Status = http.StatusText(res.StatusCode)
+
+				log.Printf("%-24s %5s %d %s: %s\n", conn.RemoteAddr().String(), req.Method, res.StatusCode, res.Status, req.URL.Path)
+				if err = res.Write(conn); err != nil {
+					log.Println("error writing request:", err)
+					return
+				}
 			}
 
 			select {
@@ -165,41 +165,31 @@ func ServeHTTP(ctx context.Context) {
 	}
 }
 
-func handle(ctx context.Context, req *http.Request, conn net.Conn) {
-	var res = http.Response{
-		Proto:      "HTTP/1.1",
-		ProtoMajor: 1,
-		ProtoMinor: 1,
-		StatusCode: http.StatusOK,
-	}
-
+func handle(ctx context.Context, req *http.Request, conn net.Conn) (code int, header http.Header, r io.ReadCloser) {
 	var err error
+	code = http.StatusOK
 
 	switch req.URL.Path {
 	case "/api/keys/ssh":
 		if req.Method != "GET" {
-			res.StatusCode = http.StatusMethodNotAllowed
-			break
+			return http.StatusMethodNotAllowed, nil, nil
 		}
-		res.Body = io.NopCloser(strings.NewReader(PublicSSHKeys))
+		r = io.NopCloser(strings.NewReader(PublicSSHKeys))
 	case "/api/keys/wireguard":
 		if req.Method != "GET" {
-			res.StatusCode = http.StatusMethodNotAllowed
-			break
+			return http.StatusMethodNotAllowed, nil, nil
 		}
 		buf, _ := PublicWireguardKey.MarshalText()
-		res.Body = io.NopCloser(bytes.NewReader(buf))
+		r = io.NopCloser(bytes.NewReader(buf))
 	case "/api/link":
 		if req.Method != "POST" {
-			res.StatusCode = http.StatusMethodNotAllowed
-			break
+			return http.StatusMethodNotAllowed, nil, nil
 		}
 		log.Printf("pairing with %s\n", conn.RemoteAddr().String())
 		// check content-length
 		if l := req.ContentLength; l < 44 || l > 44+1 {
 			log.Printf("Request Content-Length (%d) != %d +/- 1/0\n", l, 44)
-			res.StatusCode = http.StatusBadRequest
-			break
+			return http.StatusBadRequest, nil, nil
 		}
 
 		// read body
@@ -209,8 +199,7 @@ func handle(ctx context.Context, req *http.Request, conn net.Conn) {
 		_, err := io.ReadFull(r, key[:])
 		if err != nil && err != io.EOF {
 			log.Println("failed to public key:", err)
-			res.StatusCode = http.StatusBadRequest
-			break
+			return http.StatusBadRequest, nil, nil
 		}
 
 		log.Printf("got buffer! %s\n", key.String())
@@ -223,8 +212,7 @@ func handle(ctx context.Context, req *http.Request, conn net.Conn) {
 			err := os.Mkdir("pending", 0700)
 			if err != nil {
 				log.Println("failed to make 'pending' dir:", err)
-				res.StatusCode = http.StatusInternalServerError
-				break
+				return http.StatusInternalServerError, nil, nil
 			}
 		} else if len(files) == 0 {
 			// still fine
@@ -245,55 +233,50 @@ func handle(ctx context.Context, req *http.Request, conn net.Conn) {
 					// something nasty is going on
 					panic(err)
 				}
-				res.StatusCode = http.StatusUnauthorized
-				break
+				return http.StatusUnauthorized, nil, nil
 			}
 		}
 
 		err = os.MkdirAll(fmt.Sprintf("pending/%s", key.String()), 0700)
 		if err != nil {
 			log.Println("failed to make pending link dir:", err)
-			res.StatusCode = http.StatusInternalServerError
-			break
+			return http.StatusInternalServerError, nil, nil
 		}
 	case "/api/sdwan":
 		if req.Method != "GET" {
-			res.StatusCode = http.StatusMethodNotAllowed
-			break
+			return http.StatusMethodNotAllowed, nil, nil
 		}
-
 		select {
 		case <-ctx.Done():
 		case RequestPeers <- conn:
 		}
 
-		return
+		header = http.Header{
+			"Content-Type": []string{"application/json"},
+		}
 	case "/api/logs":
 		if req.Method != "GET" {
-			res.StatusCode = http.StatusMethodNotAllowed
-			break
+			return http.StatusMethodNotAllowed, nil, nil
 		}
 		var w io.WriteCloser
-		res.Body, w = io.Pipe()
+		r, w = io.Pipe()
 		select{
 		case HealthCheckerRequests<-w:
 		case <-ctx.Done():
 			w.Close()
 		}
-		res.Header = http.Header{
+		header = http.Header{
 			"Content-Type": []string{"application/json"},
 		}
 	case "/api/completions":
 		if req.Method != "POST" {
-			res.StatusCode = http.StatusMethodNotAllowed
-			break
+			return http.StatusMethodNotAllowed, nil, nil
 		}
 
 		dec := json.NewDecoder(req.Body)
 		if t, _ := dec.Token(); t != json.Delim('[') {
 			log.Println("error reading services '[' for restart:", err)
-			res.StatusCode = http.StatusInternalServerError
-			break
+			return http.StatusInternalServerError, nil, nil
 		}
 
 		prompt := &strings.Builder{}
@@ -312,13 +295,12 @@ func handle(ctx context.Context, req *http.Request, conn net.Conn) {
 
 		if t, _ := dec.Token(); t != json.Delim(']') {
 			err = fmt.Errorf("error reading services ']' for restart: %+v", err)
-			res.StatusCode = http.StatusInternalServerError
+			return http.StatusInternalServerError, nil, nil
 		}
 
 		if err != nil {
 			log.Println("error decoding message in chat request:", err)
-			res.StatusCode = http.StatusBadRequest
-			break
+			return http.StatusBadRequest, nil, nil
 		}
 
 		var buf []byte
@@ -336,23 +318,20 @@ func handle(ctx context.Context, req *http.Request, conn net.Conn) {
 		lreq, err = http.NewRequestWithContext(ctx, "POST", "http://localhost/completions", bytes.NewReader(buf))
 		if err != nil {
 			log.Println("error forming llama request:", err)
-			res.StatusCode = http.StatusInternalServerError
-			break
+			return http.StatusInternalServerError, nil, nil
 		}
 
 		lres, err = llama.Client.Do(lreq)
 		if err != nil {
 			log.Println("error forwarding request to llama:", err)
-			res.StatusCode = http.StatusInternalServerError
-			break
+			return http.StatusInternalServerError, nil, nil
 		} else if lres.StatusCode < 200 || lres.StatusCode >= 300 {
 			log.Println("error forwarding request to llama:", err)
-			res.StatusCode = http.StatusInternalServerError
-			break
+			return http.StatusInternalServerError, nil, nil
 		}
 
 		var w io.WriteCloser
-		res.Body, w = io.Pipe()
+		r, w = io.Pipe()
 		var token llama.Token
 		scanner := bufio.NewScanner(lres.Body)
 
@@ -380,13 +359,12 @@ func handle(ctx context.Context, req *http.Request, conn net.Conn) {
 			}
 		}()
 
-		res.Header = http.Header{
+		header = http.Header{
 			"Content-Type": []string{"application/json"},
 		}
 	case "/api/services":
 		if req.Method != "GET" {
-			res.StatusCode = http.StatusMethodNotAllowed
-			break
+			return http.StatusMethodNotAllowed, nil, nil
 		}
 
 		ctx, cancel := context.WithCancel(ctx)
@@ -399,7 +377,7 @@ func handle(ctx context.Context, req *http.Request, conn net.Conn) {
 
 		var w io.WriteCloser
 
-		res.Body, w = io.Pipe()
+		r, w = io.Pipe()
 		go func() {
 			enc := json.NewEncoder(w)
 
@@ -432,28 +410,25 @@ func handle(ctx context.Context, req *http.Request, conn net.Conn) {
 			cancel()
 			w.Close()
 		}()
-		res.Header = http.Header{
+		header = http.Header{
 			"Content-Type": []string{"application/json"},
 		}
 	case "/api/services/start", "/api/services/stop", "/api/services/restart":
 		if req.Method != "POST" {
-			res.StatusCode = http.StatusMethodNotAllowed
-			break
+			return http.StatusMethodNotAllowed, nil, nil
 		}
 		var conn *systemd.Conn
 		conn, err = systemd.NewSystemConnectionContext(ctx)
 		if err != nil {
 			log.Println("failed connecting to systemd:", err)
-			res.StatusCode = http.StatusInternalServerError
-			break
+			return http.StatusInternalServerError, nil, nil
 		}
 		defer conn.Close()
 
 		dec := json.NewDecoder(req.Body)
 		if t, _ := dec.Token(); t != json.Delim('[') {
 			log.Println("error reading services '[' for restart:", err)
-			res.StatusCode = http.StatusInternalServerError
-			break
+			return http.StatusInternalServerError, nil, nil
 		}
 
 		var service string
@@ -477,49 +452,37 @@ func handle(ctx context.Context, req *http.Request, conn net.Conn) {
 
 		if err != nil {
 			log.Println("error reading services for restart:", err)
-			res.StatusCode = http.StatusInternalServerError
-			break
+			return http.StatusInternalServerError, nil, nil
 		}
 
 		if t, _ := dec.Token(); t != json.Delim(']') {
 			log.Println("error reading services ']' for restart:", err)
-			res.StatusCode = http.StatusInternalServerError
-			break
+			return http.StatusInternalServerError, nil, nil
 		}
 
 	default:
 		if req.Method != "GET" {
-			res.StatusCode = http.StatusNotFound
-			break
-		}
-		rw := ResponseWriter{
-			&res,
-			bytes.NewBuffer(nil),
+			return http.StatusNotFound, nil, nil
 		}
 
-		path := filepath.Clean(req.URL.Path)
-		if dir := os.Getenv("SERVE_DIR"); dir == "" {
-			path = filepath.Join("/tmp/public/", path)
-		} else {
-			path = filepath.Join(dir, path)
+		dir := os.Getenv("SERVE_DIR")
+		if dir == "" {
+			dir = "/tmp/public/"
 		}
 
-		if _, err := os.Stat(path); err != nil {
-			path = "public/index.html"
+		path := filepath.Join(dir, filepath.Clean(req.URL.Path))
+
+		if info, err := os.Stat(path); err != nil || info.IsDir() {
+			path = filepath.Join(dir, "index.html")
 		}
-		http.ServeFile(rw, req, path)
-		res.Body = io.NopCloser(rw.Buffer)
+
+		if r, err = os.Open(path); err != nil {
+			log.Println(err)
+			return http.StatusInternalServerError, nil, nil
+		}
+		header = http.Header{
+			"Content-Type": []string{mime.TypeByExtension(filepath.Ext(path))},
+		}
 	}
-
-	defer conn.Close()
-	if err != nil {
-		log.Println("error processing request:", err)
-	}
-	res.Status = http.StatusText(res.StatusCode)
-
-	err = res.Write(conn)
-	if err != nil {
-		log.Println("error writing request:", err)
-		return
-	}
+	return
 }
