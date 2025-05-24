@@ -15,6 +15,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strconv"
 	"os"
 	filepath "path"
 	"strings"
@@ -483,7 +484,10 @@ func handle(ctx context.Context, req *http.Request, conn net.Conn) (code int, he
 
 		if strings.HasSuffix(req.URL.Path, "/") {
 			path = filepath.Join(ServeDirectory, filepath.Clean(req.URL.Path), "index.html")
-		} else if info, err := os.Stat(path); err != nil {
+		}
+
+		info, err := os.Stat(path)
+		if err != nil {
 			return http.StatusNotFound, nil, nil
 		} else if info.IsDir() {
 			code = http.StatusMovedPermanently
@@ -491,6 +495,13 @@ func handle(ctx context.Context, req *http.Request, conn net.Conn) (code int, he
 				"Location": []string{req.URL.Path+"/"},
 			}
 			return
+		} else if ts := req.Header.Get("If-Modified-Since"); ts == "" {
+			// fine
+		} else if t, err := time.Parse(http.TimeFormat, ts); err != nil {
+			// fine
+			log.Printf("If-Modified-Since time parse failure: %v\n", err)
+		} else if info.ModTime().After(t) {
+			return http.StatusNotModified, nil, nil
 		}
 
 		if r, err = os.Open(path); err != nil {
@@ -500,6 +511,8 @@ func handle(ctx context.Context, req *http.Request, conn net.Conn) (code int, he
 
 		header = http.Header{
 			"Content-Type": []string{mime.TypeByExtension(filepath.Ext(path))},
+			"Last-Modified": []string{info.ModTime().Format(http.TimeFormat)},
+			"Content-Length": []string{strconv.FormatInt(info.Size(), 10)},
 		}
 	}
 	return
