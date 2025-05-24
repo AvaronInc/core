@@ -229,7 +229,7 @@ func HealthCheck(ctx context.Context) (messages []Message, err error) {
 var HealthCheckerRequests = make(chan io.WriteCloser)
 
 func HealthChecker(ctx context.Context) {
-	ticker := time.NewTicker(time.Second*3)
+	ticker := time.NewTicker(time.Minute*10)
 	messages :=  make(map[time.Time][]Message)
 	var (
 		t time.Time
