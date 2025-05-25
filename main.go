@@ -142,20 +142,18 @@ func HealthCheck(ctx context.Context) (messages []Message, err error) {
 		req, err = http.NewRequestWithContext(ctx, "POST", "http://localhost/completions", bytes.NewReader(buf))
 		if err != nil {
 			log.Println("error forming llama request:", err)
-			res.StatusCode = http.StatusInternalServerError
 			break
 		}
 
 		res, err = llama.Client.Do(req)
 		if err != nil {
 			log.Println("error forwarding request to llama:", err)
-			res.StatusCode = http.StatusInternalServerError
 			break
 		} else if res.StatusCode < 200 || res.StatusCode >= 300 {
 			log.Println("error forwarding request to llama:", err)
-			res.StatusCode = http.StatusInternalServerError
 			break
 		}
+
 		log.Println("got response - starting scanning:", res)
 
 		r, w = io.Pipe()
