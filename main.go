@@ -726,20 +726,20 @@ type IPer interface {
   },
 */
 
-func GetBranch() (Branch, error) {
+func GetBranch() (*Branch, error) {
 	hostname, err := os.Hostname()
 	if err != nil {
-		return Branch{}, fmt.Errorf("failed to query OS hostname: %+v", err)
+		return nil, fmt.Errorf("failed to query OS hostname: %+v", err)
 	}
 
 	links, err := network.List(context.Background())
 	if err != nil {
-		return Branch{}, fmt.Errorf("failed to query network links: %+v", err)
+		return nil, fmt.Errorf("failed to query network links: %+v", err)
 	}
 
 	routes, err := network.Routes(context.Background())
 	if err != nil {
-		return Branch{}, fmt.Errorf("failed to query routes: %+v", err)
+		return nil, fmt.Errorf("failed to query routes: %+v", err)
 	}
 
 	sort.Sort(network.RouteMask(routes))
@@ -763,7 +763,7 @@ func GetBranch() (Branch, error) {
 
 	tcpmetrics, err := network.Metrics(context.Background())
 	if err != nil {
-		return Branch{}, fmt.Errorf("failed to query network metrics: %+v", err)
+		return nil, fmt.Errorf("failed to query network metrics: %+v", err)
 	}
 
 	metrics, ages := Analyze(links, tcpmetrics)
@@ -792,7 +792,7 @@ func GetBranch() (Branch, error) {
 		branch.FailoverConnection1 = c
 	}
 
-	return branch, nil
+	return &branch, nil
 }
 
 var (
@@ -1041,7 +1041,7 @@ func WritePeerConfiguration(w io.Writer, us *Key, peers map[Key]PeerInfo) (n int
 
 var (
 	UpdatePeer   = make(chan Branch)
-	RequestPeers = make(chan net.Conn)
+	RequestPeers = make(chan io.WriteCloser)
 )
 
 func main() {
@@ -1247,42 +1247,21 @@ func main() {
 				continue
 			}
 			*bp = branch
-		case conn := <-RequestPeers:
+		case w := <-RequestPeers:
 			fmt.Printf("requesting branches\n")
 
-			var res = http.Response{
-				Proto:      "HTTP/1.1",
-				ProtoMajor: 1,
-				ProtoMinor: 1,
-				StatusCode: http.StatusOK,
+			var buf []byte
+			var err error
+
+			if branches[PublicWireguardKey], err = GetBranch(); err != nil {
+				log.Printf("failed to get local branch: %+v", err)
+			} else if buf, err = json.Marshal(branches); err != nil {
+				log.Printf("failed to marshal branches: %+v", err)
+			} else if _, err = w.Write(buf); err != nil {
+				log.Println("error writing branches:", err)
 			}
 
-			var slice []Branch
-
-			if branch, err := GetBranch(); err != nil {
-				res.StatusCode = http.StatusInternalServerError
-				err = fmt.Errorf("failed to get local branch: %+v", err)
-			} else {
-				slice = append(slice, branch)
-				for _, branch := range branches {
-					fmt.Printf("adding branch: %+v\n", branch)
-					slice = append(slice, *branch)
-				}
-				if buf, err := json.Marshal(slice); err != nil {
-					res.StatusCode = http.StatusInternalServerError
-					err = fmt.Errorf("failed to marshal: %+v", err)
-				} else {
-					res.Body = io.NopCloser(bytes.NewReader(buf))
-				}
-			}
-
-			go func(conn net.Conn, res http.Response) {
-				if err = res.Write(conn); err != nil {
-					log.Println("error writing request:", err)
-				}
-				conn.Close()
-			}(conn, res)
-
+			w.Close()
 		case <-ctx.Done():
 			return
 		}

@@ -256,9 +256,12 @@ func handle(ctx context.Context, req *http.Request, conn net.Conn) (code int, he
 		if req.Method != "GET" {
 			return http.StatusMethodNotAllowed, nil, nil
 		}
+		var w io.WriteCloser
+		r, w = io.Pipe()
 		select {
-		case <-ctx.Done():
 		case RequestPeers <- conn:
+		case <-ctx.Done():
+			w.Close()
 		}
 
 		header = http.Header{
