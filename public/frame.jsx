@@ -145,7 +145,7 @@ export default Frame = ({children}) => {
 		icons[i++] = (
 			<li key={key} class="nav-item">
 				<a
-					class={"ps-2 pe-4 nav-link" + (key === path ? " active" : "")}
+					class={"ps-3 pe-5 nav-link" + (key === path ? " active" : "")}
 					href={"/"+key}
 				>
 					<svg
@@ -169,27 +169,32 @@ export default Frame = ({children}) => {
 	return (
 		<React.Fragment>
 			<nav
-				style={{scrollbarWidth: "none" }}
-				class="navbar navbar-dark bg-dark overflow-auto"
+				style={{height: "100vh", scrollbarWidth: "none" }}
+				class="navbar-dark bg-dark pt-2 overflow-y-scroll text-nowrap"
 			>
-				<ul class="navbar-nav mx-3">
+				<ul class="navbar-nav h-100">
 					{icons}
 					<li
-						class="nav-item mx-auto mt-3  nav-link d-flex flex-row "
+						class="nav-item mt-auto ms-3 me-5 mb-3 p-0 nav-link d-flex justify-content-evenly"
 						onClick={(e) => {e.preventDefault(); setSpin(true)}}
 					>
 						<img
 							width="30"
 							src="/favicon.png"
 							height="30"
-							class={"mx-2 my-auto" + (spin ? " spin" : "")}
+							class={"my-auto" + (spin ? " spin" : "")}
 
 						/>
-						<small class="text-sm-start">© Copyright 2025<br/>Avaron Holdings, LLC</small>
+						<small class="text-center" style={{fontSize: ".75em" }} >Avaron Holdings, LLC<br/>© Copyright 2025</small>
 					</li>
 				</ul>
 			</nav>
-			{children}
+			<div
+				style={{height: "100vh", width: "100%", scrollbarWidth: "none" }}
+				class="overflow-y-scroll p-2"
+			>
+				{children}
+			</div>
 		</React.Fragment>
 	)
 }

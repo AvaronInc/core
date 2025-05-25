@@ -22,6 +22,7 @@ SRC=\
 	public/topology/index.js \
 	public/version-control/index.js
 
+
 build: \
 	$(SRC) \
 	$(BIN).service \
@@ -31,13 +32,15 @@ build: \
 serve: build
 	./avaron
 
-$(SRC): public/frame.mjs
+run: build
+	./$(BIN)
+
+public/dashboard/index.js: public/map.jsx public/coordinates.jsx public/util.jsx
+
+$(SRC): public/frame.jsx
 
 $(BIN): $(GO_FILES)
 	go build
-
-run: build
-	./$(BIN)
 
 $(BIN).service: in.service Makefile
 	sed 's,@PREFIX,$(PREFIX),g; s,@BIN,$(BIN),g' in.service > $@
