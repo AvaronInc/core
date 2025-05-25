@@ -1122,17 +1122,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	info, err := whois.Get()
-	if err != nil {
-		log.Println("failed to get coordinates:", err)
-	}
-
-	MyLocation = Location{
-		Latitude:  info.Latitude(),
-		Longitude: info.Longitude(),
-		Address:   info.Address(),
-	}
-
 	buf, err := os.ReadFile("pid")
 	if err != nil && os.IsNotExist(err) {
 		if len(os.Args) > 1 {
@@ -1223,6 +1212,17 @@ func main() {
 				}
 			}
 		}(key)
+	}
+
+	info, err := whois.Get()
+	if err != nil {
+		log.Println("failed to get coordinates:", err)
+	}
+
+	MyLocation = Location{
+		Latitude:  info.Latitude(),
+		Longitude: info.Longitude(),
+		Address:   info.Address(),
 	}
 
 	branches := make(map[Key]*Branch)
