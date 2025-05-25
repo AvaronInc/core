@@ -67,7 +67,7 @@ func init() {
 
 	var err error
 	if err = llama.Start(); err != nil {
-		log.Fatalln("failed to start llama server", err)
+		// TODO: log.Fatalln("failed to start llama server", err)
 	}
 
 	go func() {
@@ -76,6 +76,7 @@ func init() {
 			log.Println("llama server failed for some reason:", err)
 			n = 1
 		}
+		return // TODO
 		cancel()
 		time.Sleep(5 * time.Second)
 		os.Exit(n)
