@@ -380,52 +380,22 @@ func handle(ctx context.Context, req *http.Request, conn net.Conn) (code int, he
 			return http.StatusMethodNotAllowed, nil, nil
 		}
 
-		ctx, cancel := context.WithCancel(ctx)
-		ch := make(chan Service)
-		go func() {
-			if err := ListServices(ctx, ch); err != nil {
-				panic(err)
-			}
-		}()
+		m, err := ListServices(ctx)
+		if err != nil {
+			panic(err)
+		}
 
-		var w io.WriteCloser
+		buf, err := json.Marshal(m)
+		if err != nil {
+			log.Println("error marshalling systemd services", err)
+			return http.StatusInternalServerError, nil, nil
+		}
 
-		r, w = io.Pipe()
-		go func() {
-			enc := json.NewEncoder(w)
-
-			err := func() (err error) {
-				if _, err = fmt.Fprintf(w, "["); err != nil {
-					return
-				}
-				i := 0
-				for service := range ch {
-					if i == 0 {
-						// ok
-					} else if _, err = fmt.Fprintf(w, ","); err != nil {
-						return
-					}
-
-					if err = enc.Encode(service); err != nil {
-						return
-					}
-					i += 1
-
-				}
-				if _, err = fmt.Fprintf(w, "]"); err != nil {
-					return
-				}
-				return
-			}()
-			if err != nil {
-				fmt.Fprintf(os.Stdout, "error encoding service: %+v\n", err)
-			}
-			cancel()
-			w.Close()
-		}()
+		r = io.NopCloser(bytes.NewReader(buf))
 		header = http.Header{
 			"Content-Type": []string{"application/json"},
 		}
+		return
 	case "/api/services/start", "/api/services/stop", "/api/services/restart":
 		if req.Method != "POST" {
 			return http.StatusMethodNotAllowed, nil, nil

@@ -2,7 +2,6 @@ package main
 
 import (
 	network "avaron/net"
-	"avaron/sys/mem"
 	"avaron/llama"
 	"avaron/whois"
 	"bufio"
@@ -12,7 +11,6 @@ import (
 	"encoding/json"
 	"fmt"
 	systemd "github.com/coreos/go-systemd/v22/dbus"
-	journal "github.com/coreos/go-systemd/v22/sdjournal"
 	"io"
 	"io/fs"
 	"log"
@@ -24,7 +22,6 @@ import (
 	"os/exec"
 	"os/user"
 	filepath "path"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -408,69 +405,7 @@ type Branch struct {
 	Metrics             Metrics    `json:"metrics"`
 }
 
-/* frontend
-{
-  id: 'vpp-1',
-  uuid: 'f8c3de3d-1d47-4f5a-b898-3f0d1c23a1d9',
-  name: 'VPP Firewall',
-  type: 'vpp',
-  description: 'Vector Packet Processing firewall service for SD-WAN',
-  status: 'running',
-  cpuUsage: randomResourceUsage(),
-  memoryUsage: randomResourceUsage(),
-  lastRestart: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(), // 3 days ago
-  health: 'ok',
-  uptime: '3d 2h 14m',
-  assignedResources: {
-    cpuCores: 2,
-    ram: 4096, // MB
-    networkInterfaces: ['eth0', 'eth1']
-  },
-  networkIO: {
-    received: 12458, // KB/s
-    transmitted: 9845 // KB/s
-  },
-  dependencies: ['vpp-route-policy', 'interface-manager'],
-  logEntries: generateLogEntries(20)
-},
-*/
-
-type AssignedResources struct {
-	CPUCores          int      `json:"cpuCores"`
-	RAM               int      `json:"ram"` // in MB
-	NetworkInterfaces []string `json:"networkInterfaces"`
-}
-
-type NetworkIO struct {
-	Received    int `json:"received"`    // in KB/s
-	Transmitted int `json:"transmitted"` // in KB/s
-}
-
-type LogEntry struct {
-	Timestamp time.Time `json:"timestamp"`
-	Message   string    `json:"message"`
-}
-
-type Service struct {
-	ID                string            `json:"id"`
-	UUID              string            `json:"uuid"`
-	Name              string            `json:"name"`
-	Type              string            `json:"type"`
-	Description       string            `json:"description"`
-	Status            string            `json:"status"`
-	CPUUsage          float64           `json:"cpuUsage"`
-	MemoryUsage       float64           `json:"memoryUsage"`
-	LastRestart       time.Time         `json:"lastRestart"`
-	Health            string            `json:"health"`
-	Uptime            string            `json:"uptime"`
-	AssignedResources AssignedResources `json:"assignedResources"`
-	NetworkIO         NetworkIO         `json:"networkIO"`
-	Dependencies      []string          `json:"dependencies"`
-	LogEntries        []LogEntry        `json:"logEntries"`
-}
-
-func ListServices(ctx context.Context, ch chan Service) (err error) {
-	defer close(ch)
+func ListServices(ctx context.Context) (m map[string]systemd.UnitStatus, err error) {
 	var conn *systemd.Conn
 	conn, err = systemd.NewSystemConnectionContext(ctx)
 	if err != nil {
@@ -480,22 +415,19 @@ func ListServices(ctx context.Context, ch chan Service) (err error) {
 	defer conn.Close()
 
 	var files []systemd.UnitFile
-	files, err = conn.ListUnitFilesContext(ctx)
+	files, err = conn.ListUnitFilesByPatternsContext(ctx, nil, nil)
 	if err != nil {
 		log.Println("failed to list unit-files:", err)
 		return
 	}
 
-	total, err := mem.GetTotal()
-	if err != nil {
-		log.Println("failed to find OS memory amount:", err)
-		return
-	}
-
 	paths := make([]string, 0, len(files))
-	m := make(map[string]struct{})
+	m = make(map[string]systemd.UnitStatus)
 	for i := range files {
 		path := filepath.Base(files[i].Path)
+		if !strings.HasSuffix(path, ".service") {
+			continue
+		}
 		if strings.Index(path, "@.") >= 0 {
 			continue
 		}
@@ -505,132 +437,19 @@ func ListServices(ctx context.Context, ch chan Service) (err error) {
 		if files[i].Type == "transient" {
 			continue
 		}
-		if _, ok := m[path]; ok {
-			continue // dedup
-		}
-		m[path] = struct{}{}
 		paths = append(paths, path)
 	}
 
-	var units []systemd.UnitStatus
-	units, err = conn.ListUnitsByNamesContext(ctx, paths)
+	units, err := conn.ListUnitsByNamesContext(ctx, paths)
 	if err != nil {
 		log.Println("failed to list units:", err)
 		return
 	}
 
-	var config = journal.JournalReaderConfig{
-		Matches: []journal.Match{
-			{
-				Field: "_SYSTEMD_UNIT",
-				Value: "",
-			},
-		},
-		NumFromTail: 15,
-	}
-
-	m = make(map[string]struct{})
+	m = make(map[string]systemd.UnitStatus)
 
 	for _, unit := range units {
-		if _, ok := m[unit.Name]; ok {
-			continue // dedup
-		}
-		m[unit.Name] = struct{}{}
-		//log.Printf("%s\n", unit.Name)
-		i := strings.LastIndex(unit.Name, ".")
-		if i < 0 || i == len(unit.Name)-1 {
-			continue
-		}
-		var (
-			property *systemd.Property
-			memory   uint64
-			cpu      time.Duration
-			uptime   time.Duration
-			start    time.Time
-			s        = Service{
-				ID:           unit.Name,
-				UUID:         unit.Name,
-				Name:         unit.Name[:i],
-				Type:         unit.Name[i+1:],
-				Description:  unit.Description,
-				Status:       unit.SubState,
-				Uptime:       uptime.String(),
-				Dependencies: []string{},
-				LogEntries:   []LogEntry{},
-				AssignedResources: AssignedResources{
-					CPUCores:          runtime.NumCPU(),
-					NetworkInterfaces: []string{},
-				},
-			}
-		)
-
-		if s.Type != "service" {
-			continue
-		}
-
-		switch unit.SubState {
-		case "running":
-			s.Health = "ok"
-			if property, err = conn.GetServiceProperty(unit.Name, "MemoryCurrent"); err != nil {
-				log.Printf("error getting memory for service '%s': %+v\n", unit.Name, err)
-			} else {
-				memory = property.Value.Value().(uint64)
-			}
-
-			if property, err = conn.GetServiceProperty(unit.Name, "CPUUsageNSec"); err != nil {
-				log.Printf("error getting memory for service '%s': %+v\n", unit.Name, err)
-			} else {
-				cpu = time.Duration(property.Value.Value().(uint64)) * time.Nanosecond
-			}
-
-			if property, err = conn.GetUnitProperty(unit.Name, "Requires"); err != nil {
-				log.Printf("error getting memory for service '%s': %+v\n", unit.Name, err)
-			} else {
-				s.Dependencies = property.Value.Value().([]string)
-			}
-
-			if property, err = conn.GetUnitProperty(unit.Name, "ActiveEnterTimestamp"); err != nil {
-				log.Printf("error getting memory for service '%s': %+v\n", unit.Name, err)
-				err = nil
-			} else {
-				start = time.UnixMicro(int64(property.Value.Value().(uint64)))
-				uptime = time.Now().Sub(start)
-			}
-			s.LastRestart = start
-			s.MemoryUsage = truncate(float64(memory)/float64(total)*100, 2)
-			s.CPUUsage = truncate(float64((cpu*time.Duration(runtime.NumCPU())/uptime).Milliseconds()/10), 2)
-		case "dead", "failed":
-			s.Health = "critical"
-		case "exited":
-			s.Health = "ok"
-		default:
-			log.Printf("unknown state %s\n", unit.SubState)
-			s.Health = "stopped"
-		}
-
-		config.Matches[0].Value = unit.Name
-		var j *journal.JournalReader
-		j, err = journal.NewJournalReader(config)
-		if err != nil {
-			log.Printf("journal initialization error for %s: %+v\n", unit.Name, err)
-		} else {
-			go func() {
-				time.Sleep(time.Millisecond * 50) // HACK
-				j.Close()
-			}()
-			scanner := bufio.NewScanner(j)
-			for scanner.Scan() {
-				s.LogEntries = append(s.LogEntries, LogEntry{
-					Message:   scanner.Text(),
-					Timestamp: time.Now(), // HACK
-				})
-			}
-		}
-		select {
-		case ch <- s:
-		case <-ctx.Done():
-			return
-		}
+		m[unit.Name] = unit
 	}
 
 	return
