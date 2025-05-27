@@ -184,40 +184,6 @@ type Route struct {
 	Flags       []string `json:"flags"`
 }
 
-func (i *Interface) ID() string {
-	return i.Netlink.IfName
-}
-
-func (i *Interface) Type() string {
-	if t := i.Ethtool.Port; t != "" && t != "none" {
-		return t
-	} else if i.LinkInfo != nil && i.LinkInfo.InfoKind != "" {
-		return i.LinkInfo.InfoKind
-	} else {
-		return i.Netlink.LinkType
-	}
-}
-
-func (i *Interface) Status() string {
-	switch i.Netlink.OperState {
-	case "UP":
-		return "active"
-	case "UNKNOWN":
-		return "degraded"
-	default:
-		return "down"
-	}
-}
-
-func (i *Interface) Uptime() int64 {
-	return 0
-}
-
-func (i *Interface) Bandwidth() (int64, int64) {
-	n := int64(i.Ethtool.Speed)
-	return n, n
-}
-
 func (i *Interface) IPs() []net.IP {
 	var ips []net.IP
 

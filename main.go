@@ -22,7 +22,6 @@ import (
 	"os/exec"
 	"os/user"
 	filepath "path"
-	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -64,6 +63,15 @@ func (k Key) AsPath() string {
 func truncate(f float64, precision int) float64 {
 	shift := math.Pow(10, float64(precision))
 	return math.Trunc(f*shift) / shift
+}
+
+type Point interface {
+	Latitude() float64
+	Longitude() float64
+}
+
+func ToCoordinates(p Point) [2]float64 {
+	return [2]float64{p.Longitude(), p.Latitude()}
 }
 
 const HEALTH_PROMPT = `
@@ -343,66 +351,13 @@ func (k Key) GlobalAddress() (n net.IPNet) {
 	return
 }
 
-// Location represents the geographical location of the branch
-type Location struct {
-	Latitude  float64 `json:"lat"`
-	Longitude float64 `json:"lng"`
-	Address   string  `json:"address"`
-}
-
-// Bandwidth represents the bandwidth details for a connection
-type Bandwidth struct {
-	Download int64 `json:"download"`
-	Upload   int64 `json:"upload"`
-}
-
-// Connection represents a network connection
-type Connection struct {
-	ID        string    `json:"id"`
-	Type      string    `json:"type"`
-	Status    string    `json:"status"`
-	Uptime    int64     `json:"uptime"`
-	Bandwidth Bandwidth `json:"bandwidth"`
-}
-
-type Linker interface {
-	ID() string
-	Type() string
-	Status() string
-	Bandwidth() (int64, int64)
-}
-
-func AsConnection(l Linker) Connection {
-	u, d := l.Bandwidth()
-	return Connection{
-		ID:     l.ID(),
-		Type:   l.Type(),
-		Status: l.Status(),
-		Bandwidth: Bandwidth{
-			Upload:   u,
-			Download: d,
-		},
-	}
-}
-
-// Metrics represents various metrics related to the branch
-type Metrics struct {
-	Latency           int64   `json:"latency"`
-	PacketLoss        float64 `json:"packetLoss"`
-	Jitter            int64   `json:"jitter"`
-	ActiveConnections int     `json:"activeConnections"`
-}
-
-// Branch represents the branch office information
-type Branch struct {
-	ID                  string     `json:"id"`
-	Name                string     `json:"name"`
-	Location            Location   `json:"location"`
-	PrimaryConnection   Connection `json:"primaryConnection"`
-	FailoverConnection1 Connection `json:"failoverConnection1"`
-	IPAddress           string     `json:"ipAddress"`
-	NetworkStatus       string     `json:"networkStatus"`
-	Metrics             Metrics    `json:"metrics"`
+// Node represents the branch office information
+type Node struct {
+	Name       string                        `json:"name"`
+	Location   *whois.Info                   `json:"location"`
+	Interfaces map[string]*network.Interface `json:"interfaces"`
+	TCPMetrics []network.TCPMetric           `json:"metrics"`
+	Routes     []network.Route               `json:"metrics"`
 }
 
 func ListServices(ctx context.Context) (m map[string]systemd.UnitStatus, err error) {
@@ -455,170 +410,38 @@ func ListServices(ctx context.Context) (m map[string]systemd.UnitStatus, err err
 	return
 }
 
-func Analyze(links map[string]*network.Interface, metrics []network.TCPMetric) (total Metrics, oldest map[string]float64) {
-	total = Metrics{
-		ActiveConnections: len(metrics),
-	}
-	var sent, lost uint64
-	oldest = make(map[string]float64)
-	addresses := make(map[string]*network.Interface)
-	for _, i := range links {
-		sent += i.Stats64.Rx.Packets
-		sent += i.Stats64.Tx.Packets
-
-		lost += i.Stats64.Rx.Errors
-		lost += i.Stats64.Tx.Errors
-
-		lost += i.Stats64.Rx.Dropped
-		lost += i.Stats64.Tx.Dropped
-
-		lost += i.Stats64.Rx.OverErrors
-		lost += i.Stats64.Tx.OverErrors
-		for _, a := range i.AddrInfo {
-			addresses[a.Local] = i
-		}
-	}
-	var latency, jitter time.Duration
-	for _, m := range metrics {
-		latency += time.Duration(float64(time.Second) * m.RoundTripTime)
-		jitter += time.Duration(float64(time.Second) * m.RoundTripTimeVariance)
-		link, ok := addresses[m.Source.String()]
-		if !ok {
-			log.Printf("warning - failed to find link by address: %s\n", m.Source.String())
-			continue
-		}
-		if m.Age > oldest[link.IfName] {
-			oldest[link.IfName] = m.Age
-		}
+func GetNode(ctx context.Context) (node Node, err error) {
+	node.Name, err = os.Hostname()
+	if err != nil {
+		err = fmt.Errorf("failed to query OS hostname: %+v", err)
+		return
 	}
 
-	n := time.Duration(len(metrics))
+	node.Interfaces, err = network.List(ctx)
+	if err != nil {
+		err = fmt.Errorf("failed to query network links: %+v", err)
+		return
+	}
 
-	total.Latency = (latency / n).Milliseconds()
-	total.Jitter = (jitter / n).Milliseconds()
+	node.Routes, err = network.Routes(ctx)
+	if err != nil {
+		err = fmt.Errorf("failed to query routes: %+v", err)
+		return
+	}
 
-	total.PacketLoss = truncate((float64(lost)/float64(sent))*100, 3)
+	node.TCPMetrics, err = network.Metrics(ctx)
+	if err != nil {
+		err = fmt.Errorf("failed to query network metrics: %+v", err)
+	}
+
 	return
-}
-
-type IPer interface {
-	IP() net.IP
-}
-
-/*
-  {
-    id: 'branch1',
-    name: 'Branch Office 1',
-    location: {
-      lat: 37.7749,
-      lng: -122.4194,
-      address: '456 Market St, San Francisco, CA 94105'
-    },
-    primaryConnection: {
-      id: 'primary-b1',
-      type: 'fiber',
-      status: 'degraded',
-      uptime: 1296000, // 15 days in seconds
-      bandwidth: {
-        download: 500,
-        upload: 500
-      }
-    },
-    failoverConnection1: {
-      id: 'failover1-b1',
-      type: 'copper',
-      status: 'active',
-      uptime: 2592000,
-      bandwidth: {
-        download: 250,
-        upload: 250
-      }
-    },
-    ipAddress: '10.0.2.1',
-    networkStatus: 'degraded',
-    metrics: {
-      latency: 35,
-      packetLoss: 1.2,
-      jitter: 4.5,
-      activeConnections: 245
-    }
-  },
-*/
-
-func GetBranch() (*Branch, error) {
-	hostname, err := os.Hostname()
-	if err != nil {
-		return nil, fmt.Errorf("failed to query OS hostname: %+v", err)
-	}
-
-	links, err := network.List(context.Background())
-	if err != nil {
-		return nil, fmt.Errorf("failed to query network links: %+v", err)
-	}
-
-	routes, err := network.Routes(context.Background())
-	if err != nil {
-		return nil, fmt.Errorf("failed to query routes: %+v", err)
-	}
-
-	sort.Sort(network.RouteMask(routes))
-	var connections []*network.Interface
-	{
-		m := make(map[string]struct{})
-		for _, r := range routes {
-			_, ok := m[r.Device]
-			if ok {
-				continue
-			}
-			link, ok := links[r.Device]
-			if !ok {
-				log.Printf("warning - failed to find link %s given device name from routing table\n", r.Device)
-				continue
-			}
-			m[r.Device] = struct{}{}
-			connections = append(connections, link)
-		}
-	}
-
-	tcpmetrics, err := network.Metrics(context.Background())
-	if err != nil {
-		return nil, fmt.Errorf("failed to query network metrics: %+v", err)
-	}
-
-	metrics, ages := Analyze(links, tcpmetrics)
-	branch := Branch{
-		ID:            PublicWireguardKey.String(),
-		Name:          hostname,
-		NetworkStatus: "degraded",
-		Metrics:       metrics,
-		Location:      MyLocation,
-	}
-
-	if len(connections) > 0 {
-		c := AsConnection(connections[0])
-		c.Uptime = int64(ages[connections[0].IfName])
-		branch.PrimaryConnection = c
-		if addrs := connections[0].AddrInfo; len(addrs) > 0 {
-			sort.Sort(network.AddressMask(addrs))
-			branch.IPAddress = addrs[0].Local
-		}
-		branch.NetworkStatus = c.Status
-	}
-
-	if len(connections) > 1 {
-		c := AsConnection(connections[1])
-		c.Uptime = int64(ages[connections[1].IfName])
-		branch.FailoverConnection1 = c
-	}
-
-	return &branch, nil
 }
 
 var (
 	Home               fs.FS
 	PublicSSHKeys      string
 	PublicWireguardKey Key
-	MyLocation         Location
+	WhoisInfo          whois.Info
 )
 
 func controller() error {
@@ -729,7 +552,7 @@ func (p *PeerFSEntry) IP() string {
 	return p.address
 }
 
-func (k *Key) Sync(ctx context.Context, ch chan Branch) error {
+func (k *Key) Sync(ctx context.Context, ch chan pair) error {
 	addr := k.GlobalAddress()
 	host := fmt.Sprintf("%s:8080", addr.IP.String())
 	fmt.Printf("fetching branch updates from %+v\n", host)
@@ -761,14 +584,24 @@ func (k *Key) Sync(ctx context.Context, ch chan Branch) error {
 		return fmt.Errorf("expected '[' as starting delimeter")
 	}
 
-	var branch Branch
+	var node Node
+
 	for dec.More() {
-		err = dec.Decode(&branch)
+		key, err := dec.Token()
 		if err != nil {
 			return err
 		}
+
+		err = dec.Decode(&node)
+		if err != nil {
+			return err
+		}
+
 		select {
-		case ch <- branch:
+		case ch <- struct {
+			string
+			Node
+		}{key.(string), node}:
 		case <-ctx.Done():
 			return nil
 		}
@@ -858,8 +691,13 @@ func WritePeerConfiguration(w io.Writer, us *Key, peers map[Key]PeerInfo) (n int
 	return
 }
 
+type pair struct {
+	string
+	Node
+}
+
 var (
-	UpdatePeer   = make(chan Branch)
+	UpdatePeer   = make(chan pair)
 	RequestPeers = make(chan io.WriteCloser)
 )
 
@@ -1033,26 +871,20 @@ func main() {
 		}(key)
 	}
 
-	info, err := whois.Get()
+	WhoisInfo, err = whois.Get()
 	if err != nil {
 		log.Println("failed to get coordinates:", err)
 	}
 
-	MyLocation = Location{
-		Latitude:  info.Latitude(),
-		Longitude: info.Longitude(),
-		Address:   info.Address(),
-	}
-
-	branches := make(map[Key]*Branch)
+	nodes := make(map[Key]Node)
 	for {
 		select {
-		case branch := <-UpdatePeer:
-			fmt.Printf("updating branches\n")
+		case pair := <-UpdatePeer:
+			fmt.Printf("updating nodes\n")
 			var k Key
-			_, err := k.UnmarshalText([]byte(branch.ID))
+			_, err := k.UnmarshalText([]byte(pair.string))
 			if err != nil {
-				log.Printf("failed to parse peer ID: %s\n", branch.ID)
+				log.Printf("failed to parse peer ID: %s\n", pair.string)
 				continue
 			}
 
@@ -1060,24 +892,24 @@ func main() {
 				continue
 			}
 
-			bp, ok := branches[k]
+			_, ok := nodes[k]
 			if !ok {
 				log.Printf("unfound peer: %s\n", k.String())
 				continue
 			}
-			*bp = branch
+			nodes[k] = pair.Node
 		case w := <-RequestPeers:
-			fmt.Printf("requesting branches\n")
+			fmt.Printf("requesting nodes\n")
 
 			var buf []byte
 			var err error
 
-			if branches[PublicWireguardKey], err = GetBranch(); err != nil {
+			if nodes[PublicWireguardKey], err = GetNode(ctx); err != nil {
 				log.Printf("failed to get local branch: %+v", err)
-			} else if buf, err = json.Marshal(branches); err != nil {
-				log.Printf("failed to marshal branches: %+v", err)
+			} else if buf, err = json.Marshal(nodes); err != nil {
+				log.Printf("failed to marshal nodes: %+v", err)
 			} else if _, err = w.Write(buf); err != nil {
-				log.Println("error writing branches:", err)
+				log.Println("error writing nodes:", err)
 			}
 
 			w.Close()

@@ -252,7 +252,7 @@ func handle(ctx context.Context, req *http.Request, conn net.Conn) (code int, he
 			log.Println("failed to make pending link dir:", err)
 			return http.StatusInternalServerError, nil, nil
 		}
-	case "/api/sdwan":
+	case "/api/nodes":
 		if req.Method != "GET" {
 			return http.StatusMethodNotAllowed, nil, nil
 		}
