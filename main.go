@@ -1,8 +1,8 @@
 package main
 
 import (
-	network "avaron/net"
 	"avaron/llama"
+	network "avaron/net"
 	"avaron/whois"
 	"bufio"
 	"bytes"
@@ -105,13 +105,13 @@ func HealthCheck(ctx context.Context) (messages []Message, err error) {
 	messages = []Message{
 		{
 			Content: fmt.Sprintf("%s\nthe following is the output of ip -br addr show: %s\n", HEALTH_PROMPT, string(buf)),
-			Role: "user",
+			Role:    "user",
 		},
 	}
 
 	for {
 		builder := &strings.Builder{}
-		for _, m := range messages{
+		for _, m := range messages {
 			switch m.Role {
 			case "user":
 				fmt.Fprintf(builder, "[INST]%s[/INST]", m.Content)
@@ -185,7 +185,7 @@ func HealthCheck(ctx context.Context) (messages []Message, err error) {
 		prompt = string(buf)
 		log.Println("got full response:", prompt)
 		messages = append(messages, Message{
-			Role: "assistant",
+			Role:    "assistant",
 			Content: prompt,
 		})
 
@@ -214,7 +214,7 @@ func HealthCheck(ctx context.Context) (messages []Message, err error) {
 		log.Printf("output from suggested command:\n%s", string(out))
 
 		messages = append(messages, Message{
-			Role: "user",
+			Role:    "user",
 			Content: string(out),
 		})
 	}
@@ -224,20 +224,20 @@ func HealthCheck(ctx context.Context) (messages []Message, err error) {
 var HealthCheckerRequests = make(chan io.WriteCloser)
 
 func HealthChecker(ctx context.Context) {
-	ticker := time.NewTicker(time.Minute*10)
-	messages :=  make(map[time.Time][]Message)
+	ticker := time.NewTicker(time.Minute * 10)
+	messages := make(map[time.Time][]Message)
 	var (
-		t time.Time
+		t           time.Time
 		channel, ch chan []Message
-		ticks <-chan time.Time
+		ticks       <-chan time.Time
 	)
 
 	channel = make(chan []Message)
 	ticks = ticker.C
 
 	for {
-		select{
-		case w := <- HealthCheckerRequests:
+		select {
+		case w := <-HealthCheckerRequests:
 			enc := json.NewEncoder(w)
 			err := enc.Encode(messages)
 			if err != nil {
@@ -254,7 +254,7 @@ func HealthChecker(ctx context.Context) {
 					log.Println("HealthCheck error:", err)
 				}
 				select {
-				case ch<-messages:
+				case ch <- messages:
 				case <-ctx.Done():
 				}
 			}()

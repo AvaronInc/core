@@ -9,15 +9,15 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"mime"
 	systemd "github.com/coreos/go-systemd/v22/dbus"
 	"io"
 	"log"
+	"mime"
 	"net"
 	"net/http"
-	"strconv"
 	"os"
 	filepath "path"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -51,10 +51,10 @@ var (
 
 func ServeHTTP(ctx context.Context) {
 	var (
-		err         error
-		listener    net.Listener
-		conns chan net.Conn = make(chan net.Conn )
-		config      = &tls.Config{
+		err      error
+		listener net.Listener
+		conns    chan net.Conn = make(chan net.Conn)
+		config                 = &tls.Config{
 			Certificates: make([]tls.Certificate, 1),
 		}
 	)
@@ -273,8 +273,8 @@ func handle(ctx context.Context, req *http.Request, conn net.Conn) (code int, he
 		}
 		var w io.WriteCloser
 		r, w = io.Pipe()
-		select{
-		case HealthCheckerRequests<-w:
+		select {
+		case HealthCheckerRequests <- w:
 		case <-ctx.Done():
 			w.Close()
 		}
@@ -465,7 +465,7 @@ func handle(ctx context.Context, req *http.Request, conn net.Conn) (code int, he
 		} else if info.IsDir() {
 			code = http.StatusMovedPermanently
 			header = http.Header{
-				"Location": []string{req.URL.Path+"/"},
+				"Location": []string{req.URL.Path + "/"},
 			}
 			return
 		} else if ts := req.Header.Get("If-Modified-Since"); ts == "" {
@@ -483,8 +483,8 @@ func handle(ctx context.Context, req *http.Request, conn net.Conn) (code int, he
 		}
 
 		header = http.Header{
-			"Content-Type": []string{mime.TypeByExtension(filepath.Ext(path))},
-			"Last-Modified": []string{info.ModTime().Format(http.TimeFormat)},
+			"Content-Type":   []string{mime.TypeByExtension(filepath.Ext(path))},
+			"Last-Modified":  []string{info.ModTime().Format(http.TimeFormat)},
 			"Content-Length": []string{strconv.FormatInt(info.Size(), 10)},
 		}
 	}
