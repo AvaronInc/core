@@ -68,10 +68,7 @@ function extentFromBounds(bounds) {
 	return extent
 }
 
-function setSelectedLocation(setSelected, locations, coords) {
-}
-
-export default function Map({ as: Tag = 'div', map, bounds, locations, peers, selected, setSelected, ...rest }) {
+export default function Map({ as: Tag = 'div', map, bounds, locations, nodes, selected, setSelected, ...rest }) {
 	const container = useRef(null);
 	const circles   = useRef(new VectorSource({
 		features: [],
@@ -133,7 +130,7 @@ export default function Map({ as: Tag = 'div', map, bounds, locations, peers, se
 		const center = circle.getGeometry().getCenter()
 
 		const m = {}
-		for (key of locations[ctoa(toLonLat(center))]) {
+		for (key of locations[ctoa(toLonLat(center))].nodes) {
 			m[key] = null
 		}
 		setSelected(m)
@@ -151,15 +148,18 @@ export default function Map({ as: Tag = 'div', map, bounds, locations, peers, se
 
 		const m = {}
 		for (const key in selected) {
-			const coords = peers[key].location
+			if (!(key in nodes)) {
+				continue
+			}
+			const {longitude, latitude} = nodes[key].location
+			const coords = [longitude, latitude]
 			const location = ctoa(coords)
 			if (location in m) {
 				continue
 			}
 			m[location] = null
-			console.log("attempting setting yellow", coords, location)
-			console.log(circles.current.getFeaturesAtCoordinate(coords))
-			for (const feature of circles.current.getFeaturesAtCoordinate(fromLonLat(coords))) {
+			const features = circles.current.getFeaturesAtCoordinate(fromLonLat(coords))
+			for (const feature of features) {
 				console.log("setting yellow", coords)
 				feature.setStyle(yellow)
 			}
