@@ -4,10 +4,10 @@ import (
 	"avaron/llama"
 	network "avaron/net"
 	"avaron/whois"
+	wg "avaron/wireguard"
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	systemd "github.com/coreos/go-systemd/v22/dbus"
@@ -33,32 +33,6 @@ var (
 		0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFC,
 	}
 )
-
-type Key [32]byte
-
-func (k Key) String() string {
-	return base64.StdEncoding.EncodeToString(k[:])
-}
-
-func (k *Key) UnmarshalText(buf []byte) (int64, error) {
-	if len(buf) < 44 {
-		return 0, io.ErrShortBuffer
-	}
-
-	log.Printf("decoding buf: '%s'\n", buf[:])
-	_, err := base64.StdEncoding.Decode(k[:], bytes.TrimSpace(buf[:]))
-	return int64(len(buf)), err
-}
-
-func (k Key) MarshalText() ([]byte, error) {
-	buf := make([]byte, 44)
-	base64.StdEncoding.Encode(buf[:], k[:])
-	return buf, nil
-}
-
-func (k Key) AsPath() string {
-	return strings.Replace(k.String(), "/", "-", -1)
-}
 
 func truncate(f float64, precision int) float64 {
 	shift := math.Pow(10, float64(precision))
@@ -278,7 +252,7 @@ func HealthChecker(ctx context.Context) {
 	}
 }
 
-func GenerateLinkLocal(k1, k2 *Key) (n1, n2 net.IPNet) {
+func GenerateLinkLocal(k1, k2 *wg.Key) (n1, n2 net.IPNet) {
 	if len(k1) != len(k2) {
 		panic("keys should be same length")
 	}
@@ -328,36 +302,13 @@ func GenerateLinkLocal(k1, k2 *Key) (n1, n2 net.IPNet) {
 	return
 }
 
-func (k Key) GlobalAddress() (n net.IPNet) {
-	n.IP = make([]byte, net.IPv6len)
-	n.Mask = make([]byte, net.IPv6len)
-
-	if len(k) < net.IPv6len {
-		panic("key should be longer than IPv6 address")
-	}
-
-	var (
-		prefix = []byte{0xfc, 0x00, 0xa7, 0xa0}
-		mask   = []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
-	)
-
-	copy(n.IP, prefix)
-	copy(n.Mask, mask)
-
-	for i := 0; i < net.IPv6len-len(prefix); i++ {
-		n.IP[i+len(prefix)] = k[i]
-	}
-
-	return
-}
-
-// Node represents the branch office information
 type Node struct {
 	Name       string                        `json:"name"`
 	Location   *whois.Info                   `json:"location"`
 	Interfaces map[string]*network.Interface `json:"interfaces"`
+	Tunnels    map[wg.Key]*wg.Interface      `json:"tunnels"`
 	TCPMetrics []network.TCPMetric           `json:"metrics"`
-	Routes     []network.Route               `json:"metrics"`
+	Routes     []network.Route               `json:"routes"`
 }
 
 func ListServices(ctx context.Context) (m map[string]systemd.UnitStatus, err error) {
@@ -411,6 +362,8 @@ func ListServices(ctx context.Context) (m map[string]systemd.UnitStatus, err err
 }
 
 func GetNode(ctx context.Context) (node Node, err error) {
+	node.Location = &WhoisInfo
+
 	node.Name, err = os.Hostname()
 	if err != nil {
 		err = fmt.Errorf("failed to query OS hostname: %+v", err)
@@ -434,13 +387,18 @@ func GetNode(ctx context.Context) (node Node, err error) {
 		err = fmt.Errorf("failed to query network metrics: %+v", err)
 	}
 
+	node.Tunnels, err = wg.Interfaces(ctx)
+	if err != nil {
+		err = fmt.Errorf("failed to query network metrics: %+v", err)
+	}
+
 	return
 }
 
 var (
 	Home               fs.FS
 	PublicSSHKeys      string
-	PublicWireguardKey Key
+	PublicWireguardKey wg.Key
 	WhoisInfo          whois.Info
 )
 
@@ -470,7 +428,7 @@ func controller() error {
 			return fmt.Errorf("reading response body: %+v", err)
 		}
 
-		var key Key
+		var key wg.Key
 		_, err = key.UnmarshalText(bytes.TrimSpace(buf))
 		if err != nil {
 			return fmt.Errorf("failed to parse response as Wireguard Key: %+v", err)
@@ -492,7 +450,7 @@ func controller() error {
 			return fmt.Errorf("reading response body: %+v", err)
 		}
 
-		dir := filepath.Join("peers", key.AsPath())
+		dir := filepath.Join("peers", key.Path())
 		err = os.Mkdir(dir, 0755)
 		if err != nil {
 			return fmt.Errorf("reading response body: %+v", err)
@@ -552,7 +510,7 @@ func (p *PeerFSEntry) IP() string {
 	return p.address
 }
 
-func (k *Key) Sync(ctx context.Context, ch chan pair) error {
+func Sync(ctx context.Context, k *wg.Key, ch chan pair) error {
 	addr := k.GlobalAddress()
 	host := fmt.Sprintf("%s:8080", addr.IP.String())
 	fmt.Printf("fetching branch updates from %+v\n", host)
@@ -614,10 +572,10 @@ func (k *Key) Sync(ctx context.Context, ch chan pair) error {
 	return nil
 }
 
-func GetPeerInfo() (map[Key]PeerInfo, error) {
+func GetPeerInfo() (map[wg.Key]PeerInfo, error) {
 	entries, err := os.ReadDir("peers")
 
-	peers := make(map[Key]PeerInfo, len(entries))
+	peers := make(map[wg.Key]PeerInfo, len(entries))
 	if err != nil {
 		log.Println("failed to read peers directory:", err)
 		// this is fine
@@ -625,7 +583,7 @@ func GetPeerInfo() (map[Key]PeerInfo, error) {
 	}
 
 	for _, entry := range entries {
-		k := new(Key)
+		k := new(wg.Key)
 		text := strings.Replace(entry.Name(), "-", "/", -1)
 		_, err := k.UnmarshalText([]byte(text))
 		if err != nil {
@@ -671,7 +629,7 @@ func Shell(ctx context.Context, r io.Reader) error {
 	return e1
 }
 
-func WritePeerConfiguration(w io.Writer, us *Key, peers map[Key]PeerInfo) (n int, e error) {
+func WritePeerConfiguration(w io.Writer, us *wg.Key, peers map[wg.Key]PeerInfo) (n int, e error) {
 	for key, peer := range peers {
 		ours, theirs := GenerateLinkLocal(us, &key)
 		remote := key.GlobalAddress()
@@ -855,7 +813,7 @@ func main() {
 	log.Printf("iterating over %d peers\n", len(peers))
 
 	for key := range peers {
-		go func(key Key) {
+		go func(key wg.Key) {
 			ticker := time.NewTicker(time.Second * 5)
 			for {
 				select {
@@ -863,7 +821,7 @@ func main() {
 				case <-ctx.Done():
 					return
 				}
-				err := key.Sync(ctx, UpdatePeer)
+				err := Sync(ctx, &key, UpdatePeer)
 				if err != nil {
 					log.Println("error fething updates:", err)
 				}
@@ -874,14 +832,16 @@ func main() {
 	WhoisInfo, err = whois.Get()
 	if err != nil {
 		log.Println("failed to get coordinates:", err)
+	} else {
+		log.Println("got coordinates", WhoisInfo)
 	}
 
-	nodes := make(map[Key]Node)
+	nodes := make(map[wg.Key]Node)
 	for {
 		select {
 		case pair := <-UpdatePeer:
 			fmt.Printf("updating nodes\n")
-			var k Key
+			var k wg.Key
 			_, err := k.UnmarshalText([]byte(pair.string))
 			if err != nil {
 				log.Printf("failed to parse peer ID: %s\n", pair.string)

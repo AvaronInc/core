@@ -2,6 +2,7 @@ package main
 
 import (
 	"avaron/llama"
+	wg "avaron/wireguard"
 	"bufio"
 	"bytes"
 	"context"
@@ -205,7 +206,7 @@ func handle(ctx context.Context, req *http.Request, conn net.Conn) (code int, he
 		// read body
 		r := base64.NewDecoder(base64.StdEncoding, req.Body)
 
-		var key Key
+		var key wg.Key
 		_, err := io.ReadFull(r, key[:])
 		if err != nil && err != io.EOF {
 			log.Println("failed to public key:", err)
@@ -259,7 +260,7 @@ func handle(ctx context.Context, req *http.Request, conn net.Conn) (code int, he
 		var w io.WriteCloser
 		r, w = io.Pipe()
 		select {
-		case RequestPeers <- conn:
+		case RequestPeers <- w:
 		case <-ctx.Done():
 			w.Close()
 		}
