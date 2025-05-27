@@ -55,16 +55,40 @@ function setSelectedLocation(setSelected, locations, coords) {
 	setSelected(m)
 }
 
+function FindPeer(nodes, key) {
+	for (const k in nodes) {
+		for (const j in nodes[k].tunnels) {
+			if (key in nodes[k].tunnels[j].peers) {
+				return nodes[k].tunnels[j].peers[key]
+			}
+		}
+	}
+	return null
+}
+
+
 const Locations = ({nodes, locations, selected, setSelected}) => {
 	const rows = new Array(size(locations))
 	let i = 0
 	const matching = {}
+	const promises = []
 	for (const key in selected) {
-		if (!(key in nodes)) {
+		let node
+		if (key in nodes) {
+			node = nodes[key]
+			const {longitude, latitude} = node.location
+			matching[ctoa([longitude, latitude])] = null
+		} else if ((node = FindPeer(nodes, key))) {
+			// ok
+			console.log("locatoins", locations)
+			for (c in locations) {
+				if (locations[c].nodes.includes(key)) {
+					matching[c] = null
+				}
+			}
+		} else {
 			continue
 		}
-		const {longitude, latitude} = nodes[key].location
-		matching[ctoa([longitude, latitude])] = null
 	}
 
 
@@ -109,6 +133,7 @@ const Dashboard = () => {
 	const [bounds,     setBounds] = useState(null)
 	const [selected, setSelected] = useState({})
 	const [nodes,       setNodes] = useState({})
+	const tertiaryLocations = useRef({})
 
 	useEffect(() => {
 		fetch("/api/nodes")
@@ -126,7 +151,8 @@ const Dashboard = () => {
 		}
 	}
 
-	const locations = {}
+	const locations = {...tertiaryLocations.current}
+	const touched = {}
 	for (const key in nodes) {
 		const node = nodes[key]
 		const {longitude, latitude, city} = node.location
@@ -139,13 +165,40 @@ const Dashboard = () => {
 				city: city,
 			}
 		}
+
+		touched[key] = null
 	}
 
-
+	for (const k in nodes) {
+		for (const l in nodes[k].tunnels) {
+			const tunnel = nodes[k].tunnels[l]
+			for (m in tunnel.peers) {
+				if (m in touched || m in tertiaryLocations.current) {
+					continue
+				} else {
+					touched[m] = null
+				}
+				const { endpoint } =  tunnel.peers[m]
+				const i = endpoint.indexOf(":")
+				if (i <= 0) {
+					continue
+				}
+				fetch("https://ipwho.is/" + endpoint.slice(0, i))
+					.then(r => r.json())
+					.then(r => {
+						console.log(r)
+						r.nodes = [m]
+						tertiaryLocations.current[ctoa([r.longitude, r.latitude])] = r
+					})
+			}
+		}
+	}
+		
 	return (
 		<Frame>
 			<div class="card text-bg-dark">
-					<Map as="section" map={map} bounds={bounds} locations={locations} nodes={nodes} selected={selected} setSelected={setSelected} /> </div>
+				<Map as="section" map={map} bounds={bounds} locations={locations} nodes={nodes} selected={selected} setSelected={setSelected} />
+			</div>
 			<div class="d-flex flex-row mt-2 w-100">
 				<div class="card text-bg-dark flex-fill overflow-x-auto me-2 ">
 					<div class="card-header">

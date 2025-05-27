@@ -68,6 +68,17 @@ function extentFromBounds(bounds) {
 	return extent
 }
 
+function FindPeer(nodes, key) {
+	for (const k in nodes) {
+		for (const j in nodes[k].tunnels) {
+			if (key in nodes[k].tunnels[j].peers) {
+				return nodes[k].tunnels[j].peers[key]
+			}
+		}
+	}
+	return null
+}
+
 export default function Map({ as: Tag = 'div', map, bounds, locations, nodes, selected, setSelected, ...rest }) {
 	const container = useRef(null);
 	const circles   = useRef(new VectorSource({
@@ -148,12 +159,26 @@ export default function Map({ as: Tag = 'div', map, bounds, locations, nodes, se
 
 		const m = {}
 		for (const key in selected) {
-			if (!(key in nodes)) {
+			let location, coords
+			if (key in nodes) {
+				const {longitude, latitude} = nodes[key].location
+				coords = [longitude, latitude]
+				location = ctoa(coords)
+			} else if ((node = FindPeer(nodes, key))) {
+				for (location in locations) {
+					if (locations[location].nodes.includes(key)) {
+						coords = atoc(location)
+						break
+					}
+				}
+				if (coords == null) {
+					continue
+				}
+				// ok
+			} else {
 				continue
 			}
-			const {longitude, latitude} = nodes[key].location
-			const coords = [longitude, latitude]
-			const location = ctoa(coords)
+
 			if (location in m) {
 				continue
 			}
