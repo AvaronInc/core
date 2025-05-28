@@ -656,8 +656,8 @@ type pair struct {
 }
 
 var (
-	UpdatePeer   = make(chan pair)
-	RequestPeers = make(chan io.WriteCloser)
+	UpdateNode   = make(chan pair)
+	RequestNodes = make(chan io.WriteCloser)
 )
 
 func main() {
@@ -822,7 +822,7 @@ func main() {
 				case <-ctx.Done():
 					return
 				}
-				err := Sync(ctx, &key, UpdatePeer)
+				err := Sync(ctx, &key, UpdateNode)
 				if err != nil {
 					log.Println("error fething updates:", err)
 				}
@@ -840,7 +840,7 @@ func main() {
 	nodes := make(map[vertex.Key]Node)
 	for {
 		select {
-		case pair := <-UpdatePeer:
+		case pair := <-UpdateNode:
 			fmt.Printf("updating nodes\n")
 			var k vertex.Key
 			_, err := k.UnmarshalText([]byte(pair.string))
@@ -859,7 +859,7 @@ func main() {
 				continue
 			}
 			nodes[k] = pair.Node
-		case w := <-RequestPeers:
+		case w := <-RequestNodes:
 			fmt.Printf("requesting nodes\n")
 
 			var buf []byte

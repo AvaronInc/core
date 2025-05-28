@@ -260,7 +260,7 @@ func handle(ctx context.Context, req *http.Request, conn net.Conn) (code int, he
 		var w io.WriteCloser
 		r, w = io.Pipe()
 		select {
-		case RequestPeers <- w:
+		case RequestNodes <- w:
 		case <-ctx.Done():
 			w.Close()
 		}
