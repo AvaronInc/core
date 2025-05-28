@@ -7,12 +7,12 @@ function style(active, sub) {
 	let s = ["secondary", "secondary"]
 	switch (active) {
 	case "inactive": return s
-	case "failed": s[0] = "warning"; break
-	default:       s[0] = "info";    break
+	case "failed":                   break
+	default:       s[0] = "primary"; break
 	}
 
 	switch (sub) {
-	case "exited":  s[1] = "secondary"; break;
+	case "exited":                      break;
 	case "dead":    s[1] = "warning";   break;
 	case "failed":  s[1] = "danger";    break;
 	case "running": s[1] = "success";   break;
@@ -21,6 +21,45 @@ function style(active, sub) {
 
 	return s
 }
+
+
+const Context = ({children}) => (
+	<svg
+		xmlns="http://www.w3.org/2000/svg"
+		width="24"
+		height="24"
+		viewBox="0 0 24 24"
+		fill="none"
+		stroke="currentColor"
+		stroke-width="2"
+		stroke-linecap="round"
+		stroke-linejoin="round"
+		class="lucide lucide-play h-4 w-4"
+		style={{ width: ".75rem", height: ".75rem"}}
+	>
+		{children}
+	</svg>
+)
+
+const Start = (
+	<Context>
+		<polygon points="6 3 20 12 6 21 6 3"></polygon>
+	</Context>
+)
+
+const Stop = (
+	<Context>
+		<rect width="18" height="18" x="3" y="3" rx="2"></rect>
+	</Context>
+)
+
+const Restart = (
+	<Context>
+		<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path>
+	</Context>
+)
+
+
 
 const List = () => {
 	const [services, setServices] = useState(null)
@@ -66,19 +105,23 @@ const List = () => {
 				class={(key === focus) ? "table-active" : ""}
 				onClick={setFocus.bind(null, key)}
 			>
-				<td>{s.Name.replace(/\.service$/, "")}</td>
-				<td>
-					<strong class={"m-1 py-1 px-2 rounded-pill bg-"+styles[0]}>
-						{s.ActiveState}
-					</strong>
+				<td
+					class="py-3"
+				>
+					{s.Name.replace(/\.service$/, "")}
 				</td>
-				<td>
-					<strong class={"m-1 py-1 px-2 rounded-pill bg-"+styles[1]}>
+				<td class="text-center"  >
+					<p class={"m-1 py-1 px-2 rounded bg-"+styles[0]}>
+						{s.ActiveState}
+					</p>
+				</td>
+				<td class="text-center">
+					<p class={"m-1 py-1 px-2 rounded text-center bg-"+styles[1]}>
 						{s.SubState}
-					</strong>
+					</p>
 				</td>
 				{focus ? null : (
-					<td>
+					<td class="py-3">
 						<span class={"m-1 py-1 px-2"}>
 							{s.Description}
 						</span>
@@ -90,9 +133,12 @@ const List = () => {
 
 	return (
 		<Frame>
-			<div class="d-flex flex-row w-100">
+			<div class="d-flex flex-row w-100 ">
 				{services ? (
-					<div class="card text-bg-dark overflow-x-auto me-2 ">
+					<div
+						style={{scrollbarWidth: "none", maxHeight: "100vh"}}
+						class="card w-100 text-bg-dark overflow-x-auto overflow-auto"
+					>
 						<div class="card-body">
 							<table class="table table-dark">
 								<tbody>
@@ -103,9 +149,41 @@ const List = () => {
 					</div>
 				) : null}
 				{focus ? (
-					<div class="card text-bg-dark flex-fill overflow-x-auto me-2 ">
-						<div class="card-header">
+					<div class="card w-100 text-bg-dark overflow-x-auto ms-2  me-1 flex-grow">
+						<div class="card-header d-flex flex-row">
 							{focus}
+							<div class="ms-auto">
+								<div class="btn-group" role="group" aria-label="Basic example">
+									<button
+										disabled={services[focus].SubState === "running"}
+										type="button"
+										class="p-2 btn btn-primary"
+									>
+										{Start}
+									</button>
+									<button
+										disabled={services[focus].SubState !== "running"}
+										type="button"
+										class="p-2 btn btn-primary"
+									>
+										{Stop}
+									</button>
+									<button
+										disabled={services[focus].ActiveState === "inactive"}
+										type="button"
+										class="p-2 btn btn-primary"
+									>
+										{Restart}
+									</button>
+								</div>
+								<button
+									type="button"
+									class="p-2 btn btn-primary ms-1"
+									onClick={setFocus.bind(null, null)}
+								>
+									x
+								</button>
+							</div>
 						</div>
 						<div class="card-body">
 							<p>
