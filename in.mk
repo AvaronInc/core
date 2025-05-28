@@ -5,6 +5,7 @@
 
 .mjs.js:
 	$(ESL) $(ESLFLAGS) $< > $@ || (rm -f $@; exit 1)
+	touch $(@D)/index.html
 
 SRC=\
 	public/addressing/index.js \

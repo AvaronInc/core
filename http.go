@@ -474,7 +474,7 @@ func handle(ctx context.Context, req *http.Request, conn net.Conn) (code int, he
 		} else if t, err := time.Parse(http.TimeFormat, ts); err != nil {
 			// fine
 			log.Printf("If-Modified-Since time parse failure: %v\n", err)
-		} else if info.ModTime().After(t) {
+		} else if !info.ModTime().Truncate(time.Second).After(t) {
 			return http.StatusNotModified, nil, nil
 		}
 
@@ -485,7 +485,7 @@ func handle(ctx context.Context, req *http.Request, conn net.Conn) (code int, he
 
 		header = http.Header{
 			"Content-Type":   []string{mime.TypeByExtension(filepath.Ext(path))},
-			"Last-Modified":  []string{info.ModTime().Format(http.TimeFormat)},
+			"Last-Modified":  []string{info.ModTime().UTC().Format(http.TimeFormat)},
 			"Content-Length": []string{strconv.FormatInt(info.Size(), 10)},
 		}
 	}
