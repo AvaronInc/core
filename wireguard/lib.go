@@ -1,12 +1,10 @@
 package wireguard
 
 import (
+	"avaron/vertex"
 	"bufio"
-	"bytes"
 	"context"
-	"encoding/base64"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"os/exec"
@@ -14,10 +12,8 @@ import (
 	"strings"
 )
 
-type Key [32]byte
-
 type Peer struct {
-	PresharedKey        *Key         `json:"presharedKey"`
+	PresharedKey        *vertex.Key         `json:"presharedKey"`
 	Endpoint            string       `json:"endpoint"`
 	AllowedIPs          []*net.IPNet `json:"allowedIPs"`
 	LatestHandshake     string       `json:"latestHandshake"`
@@ -28,65 +24,19 @@ type Peer struct {
 
 type Interface struct {
 	Name          string        `json:"name"`
-	PrivateKey    *Key          `json:"privateKey"`
+	PrivateKey    *vertex.Key          `json:"privateKey"`
 	ListeningPort int           `json:"listeningPort"`
-	Peers         map[Key]*Peer `json:"peers"`
+	Peers         map[vertex.Key]*Peer `json:"peers"`
 }
 
-func (k Key) String() string {
-	return base64.StdEncoding.EncodeToString(k[:])
-}
 
-func (k *Key) UnmarshalText(buf []byte) (int64, error) {
-	if len(buf) < 44 {
-		return 0, io.ErrShortBuffer
-	}
-
-	log.Printf("decoding buf: '%s'\n", buf[:])
-	_, err := base64.StdEncoding.Decode(k[:], bytes.TrimSpace(buf[:]))
-	return int64(len(buf)), err
-}
-
-func (k Key) MarshalText() ([]byte, error) {
-	buf := make([]byte, 44)
-	base64.StdEncoding.Encode(buf[:], k[:])
-	return buf, nil
-}
-
-func (k Key) Path() string {
-	return strings.Replace(k.String(), "/", "-", -1)
-}
-
-func (k Key) GlobalAddress() (n net.IPNet) {
-	n.IP = make([]byte, net.IPv6len)
-	n.Mask = make([]byte, net.IPv6len)
-
-	if len(k) < net.IPv6len {
-		panic("key should be longer than IPv6 address")
-	}
-
+func Interfaces(ctx context.Context) (map[vertex.Key]*Interface, error) {
 	var (
-		prefix = []byte{0xfc, 0x00, 0xa7, 0xa0}
-		mask   = []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
-	)
-
-	copy(n.IP, prefix)
-	copy(n.Mask, mask)
-
-	for i := 0; i < net.IPv6len-len(prefix); i++ {
-		n.IP[i+len(prefix)] = k[i]
-	}
-
-	return
-}
-
-func Interfaces(ctx context.Context) (map[Key]*Interface, error) {
-	var (
-		m    = make(map[Key]*Interface)
+		m    = make(map[vertex.Key]*Interface)
 		i    *Interface
 		peer *Peer
 		cmd  = exec.CommandContext(ctx, "sudo", "/bin/wg")
-		key  Key
+		key  vertex.Key
 	)
 
 	r, err := cmd.StdoutPipe()
@@ -130,7 +80,7 @@ func Interfaces(ctx context.Context) (map[Key]*Interface, error) {
 			case "interface":
 				state = StateInterface
 				i = &Interface{
-					Peers: make(map[Key]*Peer),
+					Peers: make(map[vertex.Key]*Peer),
 					Name:  v,
 				}
 			case "peer":
@@ -150,13 +100,13 @@ func Interfaces(ctx context.Context) (map[Key]*Interface, error) {
 		case StateInterface:
 			switch k {
 			case "public key":
-				var key Key
+				var key vertex.Key
 				if _, err := key.UnmarshalText([]byte(v)); err != nil {
 					return m, err
 				}
 				m[key] = i
 			case "private key":
-				var key Key
+				var key vertex.Key
 				if v == "(hidden)" {
 					// ok
 				} else if _, err := key.UnmarshalText([]byte(v)); err != nil {
@@ -172,7 +122,7 @@ func Interfaces(ctx context.Context) (map[Key]*Interface, error) {
 		case StatePeer:
 			switch k {
 			case "preshared key":
-				var key Key
+				var key vertex.Key
 				if v == "(hidden)" {
 					// ok
 				} else if _, err := key.UnmarshalText([]byte(v)); err != nil {

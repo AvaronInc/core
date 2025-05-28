@@ -2,7 +2,7 @@ package main
 
 import (
 	"avaron/llama"
-	wg "avaron/wireguard"
+	"avaron/vertex"
 	"bufio"
 	"bytes"
 	"context"
@@ -206,7 +206,7 @@ func handle(ctx context.Context, req *http.Request, conn net.Conn) (code int, he
 		// read body
 		r := base64.NewDecoder(base64.StdEncoding, req.Body)
 
-		var key wg.Key
+		var key vertex.Key
 		_, err := io.ReadFull(r, key[:])
 		if err != nil && err != io.EOF {
 			log.Println("failed to public key:", err)

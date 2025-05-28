@@ -3,6 +3,7 @@ package main
 import (
 	"avaron/llama"
 	network "avaron/net"
+	"avaron/vertex"
 	"avaron/whois"
 	wg "avaron/wireguard"
 	"bufio"
@@ -252,7 +253,7 @@ func HealthChecker(ctx context.Context) {
 	}
 }
 
-func GenerateLinkLocal(k1, k2 *wg.Key) (n1, n2 net.IPNet) {
+func GenerateLinkLocal(k1, k2 *vertex.Key) (n1, n2 net.IPNet) {
 	if len(k1) != len(k2) {
 		panic("keys should be same length")
 	}
@@ -306,7 +307,7 @@ type Node struct {
 	Name       string                        `json:"name"`
 	Location   *whois.Info                   `json:"location"`
 	Interfaces map[string]*network.Interface `json:"interfaces"`
-	Tunnels    map[wg.Key]*wg.Interface      `json:"tunnels"`
+	Tunnels    map[vertex.Key]*wg.Interface      `json:"tunnels"`
 	TCPMetrics []network.TCPMetric           `json:"metrics"`
 	Routes     []network.Route               `json:"routes"`
 }
@@ -398,7 +399,7 @@ func GetNode(ctx context.Context) (node Node, err error) {
 var (
 	Home               fs.FS
 	PublicSSHKeys      string
-	PublicWireguardKey wg.Key
+	PublicWireguardKey vertex.Key
 	WhoisInfo          whois.Info
 )
 
@@ -428,7 +429,7 @@ func controller() error {
 			return fmt.Errorf("reading response body: %+v", err)
 		}
 
-		var key wg.Key
+		var key vertex.Key
 		_, err = key.UnmarshalText(bytes.TrimSpace(buf))
 		if err != nil {
 			return fmt.Errorf("failed to parse response as Wireguard Key: %+v", err)
@@ -510,7 +511,7 @@ func (p *PeerFSEntry) IP() string {
 	return p.address
 }
 
-func Sync(ctx context.Context, k *wg.Key, ch chan pair) error {
+func Sync(ctx context.Context, k *vertex.Key, ch chan pair) error {
 	addr := k.GlobalAddress()
 	host := fmt.Sprintf("%s:8080", addr.IP.String())
 	fmt.Printf("fetching branch updates from %+v\n", host)
@@ -572,10 +573,10 @@ func Sync(ctx context.Context, k *wg.Key, ch chan pair) error {
 	return nil
 }
 
-func GetPeerInfo() (map[wg.Key]PeerInfo, error) {
+func GetPeerInfo() (map[vertex.Key]PeerInfo, error) {
 	entries, err := os.ReadDir("peers")
 
-	peers := make(map[wg.Key]PeerInfo, len(entries))
+	peers := make(map[vertex.Key]PeerInfo, len(entries))
 	if err != nil {
 		log.Println("failed to read peers directory:", err)
 		// this is fine
@@ -583,7 +584,7 @@ func GetPeerInfo() (map[wg.Key]PeerInfo, error) {
 	}
 
 	for _, entry := range entries {
-		k := new(wg.Key)
+		k := new(vertex.Key)
 		text := strings.Replace(entry.Name(), "-", "/", -1)
 		_, err := k.UnmarshalText([]byte(text))
 		if err != nil {
@@ -629,7 +630,7 @@ func Shell(ctx context.Context, r io.Reader) error {
 	return e1
 }
 
-func WritePeerConfiguration(w io.Writer, us *wg.Key, peers map[wg.Key]PeerInfo) (n int, e error) {
+func WritePeerConfiguration(w io.Writer, us *vertex.Key, peers map[vertex.Key]PeerInfo) (n int, e error) {
 	for key, peer := range peers {
 		ours, theirs := GenerateLinkLocal(us, &key)
 		remote := key.GlobalAddress()
@@ -813,7 +814,7 @@ func main() {
 	log.Printf("iterating over %d peers\n", len(peers))
 
 	for key := range peers {
-		go func(key wg.Key) {
+		go func(key vertex.Key) {
 			ticker := time.NewTicker(time.Second * 5)
 			for {
 				select {
@@ -836,12 +837,12 @@ func main() {
 		log.Println("got coordinates", WhoisInfo)
 	}
 
-	nodes := make(map[wg.Key]Node)
+	nodes := make(map[vertex.Key]Node)
 	for {
 		select {
 		case pair := <-UpdatePeer:
 			fmt.Printf("updating nodes\n")
-			var k wg.Key
+			var k vertex.Key
 			_, err := k.UnmarshalText([]byte(pair.string))
 			if err != nil {
 				log.Printf("failed to parse peer ID: %s\n", pair.string)
