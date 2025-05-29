@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -16,7 +15,7 @@ import (
 type Peer struct {
 	PresharedKey        *vertex.Key  `json:"presharedKey"`
 	Endpoint            string       `json:"endpoint"`
-	AllowedIPs          []*net.IPNet `json:"allowedIPs"`
+	AllowedIPs          []string     `json:"allowedIPs"`
 	LatestHandshake     string       `json:"latestHandshake"`
 	Received            string       `json:"received"`
 	Sent                string       `json:"sent"`
@@ -166,12 +165,7 @@ func Interfaces(ctx context.Context) (map[vertex.Key]*Interface, error) {
 				peer.Endpoint = v
 			case "allowed ips":
 				for _, s := range strings.Split(v, ", ") {
-					log.Println("parsing CIDR", s)
-					_, net, err := net.ParseCIDR(s)
-					if err != nil {
-						return m, err
-					}
-					peer.AllowedIPs = append(peer.AllowedIPs, net)
+					peer.AllowedIPs = append(peer.AllowedIPs, s)
 				}
 			case "latest handshake":
 				peer.LatestHandshake = v
