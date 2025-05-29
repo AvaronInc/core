@@ -180,7 +180,6 @@ type Route struct {
 	Type        string
 	Destination net.IPNet
 	Gateway     net.IP
-	Interface   string
 	Protocol    string
 	Scope       string
 	Source      string
@@ -220,20 +219,23 @@ func (a *AddrInfo) IPNet() *net.IPNet {
 	return n
 }
 
-type RouteMask []Route
+type RouteMask struct {
+	Names []string
+	Routes map[string]*Route
+}
 
-func (r RouteMask) Len() int {
-	return len(r)
+func (r *RouteMask) Len() int {
+	return len(r.Routes)
 }
 func (r RouteMask) Swap(i, j int) {
-	r[i], r[j] = r[j], r[i]
+	r.Names[i], r.Names[j] = r.Names[j], r.Names[i]
 }
 func (r RouteMask) Less(i, j int) bool {
-	if !bytes.Equal(r[i].IPNet().Mask, r[j].IPNet().Mask) {
-		return bytes.Compare(r[i].IPNet().Mask, r[j].IPNet().Mask) < 0
+	if !bytes.Equal(r.Routes[r.Names[i]].IPNet().Mask, r.Routes[r.Names[j]].IPNet().Mask) {
+		return bytes.Compare(r.Routes[r.Names[i]].IPNet().Mask, r.Routes[r.Names[j]].IPNet().Mask) < 0
 	}
 
-	return r[i].Metric < r[j].Metric
+	return r.Routes[r.Names[i]].Metric < r.Routes[r.Names[j]].Metric
 }
 
 type AddressMask []AddrInfo
@@ -308,8 +310,9 @@ func Metrics(ctx context.Context) (metrics []TCPMetric, err error) {
 	return metrics, nil
 }
 
-func Routes(ctx context.Context) (routes []Route, err error) {
-	file, err := os.Open("/sys/class/net/route")
+func Routes(ctx context.Context) (routes map[string]*Route, err error) {
+	routes = make(map[string]*Route)
+	file, err := os.Open("/proc/net/route")
 	if err != nil {
 		return nil, err
 	}
@@ -319,6 +322,7 @@ func Routes(ctx context.Context) (routes []Route, err error) {
 		if _, err := hex.Decode(dst, src); err != nil {
 			panic(err)
 		}
+		dst[0], dst[1], dst[2], dst[3] = dst[3], dst[2], dst[1], dst[0]
 		return dst
 	}
 
@@ -343,16 +347,14 @@ func Routes(ctx context.Context) (routes []Route, err error) {
 		}
 
 		// Iface Destination Gateway Flags RefCnt Use Metric Mask MTU Window IRTT
-		route := Route{
+		routes[string(fields[0])] = &Route{
 			Destination: net.IPNet{
 				IP:   dec(fields[1]),
 				Mask: dec(fields[7]),
 			},
 			Gateway:   net.IP(dec(fields[2])),
-			Interface: string(fields[0]),
 			Metric:    atoi(fields[6]),
 		}
-		routes = append(routes, route)
 	}
 
 	if err := scanner.Err(); err != nil {

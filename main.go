@@ -309,7 +309,7 @@ type Node struct {
 	Interfaces map[string]*network.Interface `json:"interfaces"`
 	Tunnels    map[vertex.Key]*wg.Interface      `json:"tunnels"`
 	TCPMetrics []network.TCPMetric           `json:"metrics"`
-	Routes     []network.Route               `json:"routes"`
+	Routes     map[string]*network.Route      `json:"routes"`
 }
 
 func ListServices(ctx context.Context) (m map[string]systemd.UnitStatus, err error) {
@@ -593,11 +593,14 @@ func GetPeerInfo() (map[vertex.Key]PeerInfo, error) {
 		log.Printf("parsed key: %s\n", k.String())
 		dir := filepath.Join("peers", entry.Name())
 		address, err := os.ReadFile(filepath.Join(dir, "address"))
-		if err != nil {
+		if err == nil {
+			peers[*k] = &PeerFSEntry{
+				address: string(bytes.TrimSpace(address)),
+			}
+		} else if os.IsNotExist(err) {
+			peers[*k] = &PeerFSEntry{}
+		} else if err != nil {
 			return peers, fmt.Errorf("failed to read address for peer '%s': %+v\n", entry.Name(), err)
-		}
-		peers[*k] = &PeerFSEntry{
-			address: string(bytes.TrimSpace(address)),
 		}
 		log.Printf("read peer: %s, %s\n", k.String(), string(address))
 	}
@@ -634,7 +637,11 @@ func WritePeerConfiguration(w io.Writer, us *vertex.Key, peers map[vertex.Key]Pe
 	for key, peer := range peers {
 		ours, theirs := GenerateLinkLocal(us, &key)
 		remote := key.GlobalAddress()
-		n, e = fmt.Fprintf(w, "sudo wg set avaron peer %s endpoint %s:51820 allowed-ips ::/0\n", key, peer.IP())
+		if ip := peer.IP(); ip == "" {
+			n, e = fmt.Fprintf(w, "sudo wg set avaron peer %s allowed-ips fc00:a7a0::/32,%s/128\n", key, theirs.IP.String())
+		} else {
+			n, e = fmt.Fprintf(w, "sudo wg set avaron peer %s endpoint %s:51820 allowed-ips fc00:a7a0::/32\n", key, ip)
+		}
 		if e != nil {
 			return
 		}

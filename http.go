@@ -3,6 +3,8 @@ package main
 import (
 	"avaron/llama"
 	"avaron/vertex"
+	network "avaron/net"
+	wg "avaron/wireguard"
 	"bufio"
 	"bytes"
 	"context"
@@ -17,7 +19,9 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	filepath "path"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -288,6 +292,106 @@ func handle(ctx context.Context, req *http.Request, conn net.Conn) (code int, he
 				}
 			}()
 
+		case "POST":
+			buf, err := io.ReadAll(req.Body)
+			if err != nil {
+				log.Println("failed reading body:", err)
+				return http.StatusInternalServerError, nil, nil
+			}
+
+			var ip net.IP
+
+			if len(buf) == 0 {
+				// ok
+				var routes map[string]*network.Route
+				if routes, err = network.Routes(ctx); err != nil {
+					log.Println("failed reading routes:", err)
+					return http.StatusInternalServerError, nil, nil
+				}
+
+				var names []string
+				for i := range routes {
+					names = append(names, i)
+				}
+
+				log.Println("routes pre-sort", names)
+				sort.Sort(&network.RouteMask{names, routes})
+				log.Println("routes post-sort", names)
+				if len(routes) < 1 {
+					return http.StatusBadRequest, nil, nil
+				}
+
+				list, err := network.List(ctx)
+				if err != nil {
+					log.Println("failed to probe network links:", err)
+					os.Exit(1)
+				}
+
+				route := routes[names[len(names)-1]]
+				ip = func() net.IP {
+					for _, link := range list {
+						for _, info := range link.AddrInfo {
+							if addr := net.ParseIP(info.Local); addr == nil {
+								continue
+							} else if route.Destination.Contains(addr) {
+								return addr
+							}
+						}
+					}
+					return nil
+				}()
+
+				if ip == nil {
+					log.Println("failed to to find IP matching first route:", route)
+					os.Exit(1)
+				}
+			} else if ip = net.ParseIP(string(buf)); ip == nil {
+				log.Println("failed parsing IP")
+				return http.StatusBadRequest, nil, nil
+			}
+
+			public, private, err := wg.GenerateKeyPair()
+			if err != nil {
+				log.Println("error generating wireguard key pair:", err)
+				return http.StatusInternalServerError, nil, nil
+			}
+
+			var pw io.WriteCloser
+
+			qr := exec.Command("qrencode", "-t", "SVG")
+
+			if pw, err = qr.StdinPipe(); err != nil {
+				log.Println("failed spawning qrencode pipe:", err)
+				return http.StatusInternalServerError, nil, nil
+			}
+
+			if r, err = qr.StdoutPipe(); err != nil {
+				log.Println("failed spawning qrencode pipe:", err)
+				return http.StatusInternalServerError, nil, nil
+			}
+
+			if err = qr.Start(); err != nil {
+				log.Println("error generating wireguard key pair:", err)
+				return http.StatusInternalServerError, nil, nil
+			}
+
+			dir := filepath.Join("peers", public.Path())
+			if err := os.Mkdir(dir, 0700); err != nil {
+				log.Println("error creating peer directory:", err)
+				return http.StatusInternalServerError, nil, nil
+			}
+
+			fmt.Fprintf(pw, "[Interface]\n")
+			fmt.Fprintf(pw, "Address = %s/32\n", public.GlobalAddress().IP.String())
+			fmt.Fprintf(pw, "PrivateKey = %s\n", private.String())
+			fmt.Fprintf(pw, "\n")
+
+			fmt.Fprintf(pw, "[Peer]\n")
+			fmt.Fprintf(pw, "PublicKey = %s\n", PublicWireguardKey.String())
+			fmt.Fprintf(pw, "AllowedIPs = fc00:a7a0::/32\n")
+			fmt.Fprintf(pw, "Endpoint = %s:%d\n", ip.String(), 51820)
+			fmt.Fprintf(pw, "\n")
+			pw.Close()
 		default:
 			return http.StatusMethodNotAllowed, nil, nil
 		}

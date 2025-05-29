@@ -62,6 +62,7 @@ PATH=$HOME/.local/bin/:$PATH &&
 		libzstd-dev \
 		m4 \
 		make \
+		qrencode \
 		uuid-dev \
 		wireguard \
 	&& (
