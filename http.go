@@ -272,10 +272,10 @@ func handle(ctx context.Context, req *http.Request, conn net.Conn) (code int, he
 		header = http.Header{
 			"Content-Type": []string{"application/json"},
 		}
-	case "/api/peers":
+	case "/api/wireguard":
 		switch req.Method {
 		case "GET":
-			info, err := GetPeerInfo()
+			info, err := wg.Interfaces(ctx)
 			if err != nil {
 				return http.StatusInternalServerError, nil, nil
 			}
