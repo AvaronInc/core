@@ -30,6 +30,21 @@ type Interface struct {
 	Peers         map[vertex.Key]*Peer `json:"peers"`
 }
 
+func GenerateKey() (k vertex.Key, err error) {
+	// reading wireguard public key
+	cmd := exec.Command("/usr/bin/wg", "genkey")
+	cmd.Stdin = r
+
+	var buf []byte
+	if buf, err = cmd.Output(); err != nil {
+		return
+	}
+
+	_, err = k.UnmarshalText(buf)
+
+	return
+}
+
 func PublicKey(r io.Reader) (k vertex.Key, err error) {
 	// reading wireguard public key
 	cmd := exec.Command("/usr/bin/wg", "pubkey")
