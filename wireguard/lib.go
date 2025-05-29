@@ -14,19 +14,19 @@ import (
 )
 
 type Peer struct {
-	PresharedKey        *vertex.Key         `json:"presharedKey"`
+	PresharedKey        *vertex.Key  `json:"presharedKey"`
 	Endpoint            string       `json:"endpoint"`
 	AllowedIPs          []*net.IPNet `json:"allowedIPs"`
 	LatestHandshake     string       `json:"latestHandshake"`
-	Received            string    `json:"received"`
-	Sent                string    `json:"sent"`
+	Received            string       `json:"received"`
+	Sent                string       `json:"sent"`
 	PersistentKeepalive string       `json:"persistentKeepalive"`
 }
 
 type Interface struct {
-	Name          string        `json:"name"`
+	Name          string               `json:"name"`
 	PrivateKey    *vertex.Key          `json:"privateKey"`
-	ListeningPort int           `json:"listeningPort"`
+	ListeningPort int                  `json:"listeningPort"`
 	Peers         map[vertex.Key]*Peer `json:"peers"`
 }
 
