@@ -1,13 +1,17 @@
 package netlink
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"os/exec"
+	"strconv"
 )
 
 type Netlink struct {
@@ -173,15 +177,15 @@ type Interface struct {
 }
 
 type Route struct {
-	Type        string   `json:"type"`
-	Destination string   `json:"dst"`
-	Gateway     string   `json:"gateway,omitempty"`
-	Device      string   `json:"dev"`
-	Protocol    string   `json:"protocol"`
-	Scope       string   `json:"scope"`
-	Source      string   `json:"prefsrc"`
-	Metric      int      `json:"metric,omitempty"`
-	Flags       []string `json:"flags"`
+	Type        string
+	Destination net.IPNet
+	Gateway     net.IP
+	Interface   string
+	Protocol    string
+	Scope       string
+	Source      string
+	Metric      int
+	Flags       []string
 }
 
 func (i *Interface) IPs() []net.IP {
@@ -200,24 +204,11 @@ func (i *Interface) IPs() []net.IP {
 }
 
 func (r *Route) IP() net.IP {
-	dst := r.Destination
-	if dst == "default" {
-		dst = "0.0.0.0/0"
-	}
-	ip, _, _ := net.ParseCIDR(dst)
-	return ip
+	return r.Gateway
 }
 
 func (r *Route) IPNet() *net.IPNet {
-	dst := r.Destination
-	if dst == "default" {
-		dst = "0.0.0.0/0"
-	}
-	_, n, err := net.ParseCIDR(dst)
-	if err != nil {
-		return &net.IPNet{}
-	}
-	return n
+	return &r.Destination
 }
 
 func (a *AddrInfo) IPNet() *net.IPNet {
@@ -318,44 +309,57 @@ func Metrics(ctx context.Context) (metrics []TCPMetric, err error) {
 }
 
 func Routes(ctx context.Context) (routes []Route, err error) {
-	cmd := exec.CommandContext(ctx, "sudo", "/usr/sbin/ip", "-json", "-s", "-d", "route", "show")
-	stdout, err := cmd.StdoutPipe()
+	file, err := os.Open("/sys/class/net/route")
 	if err != nil {
-		return routes, err
+		return nil, err
 	}
 
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return routes, err
+	dec := func(src []byte) []byte {
+		dst := make([]byte, len(src)/2)
+		if _, err := hex.Decode(dst, src); err != nil {
+			panic(err)
+		}
+		return dst
 	}
 
-	dec := json.NewDecoder(stdout)
-	err = cmd.Start()
-	if err != nil {
-		buf, _ := io.ReadAll(stderr)
-		return routes, fmt.Errorf("error ip tcmetrics output: %+v - stderr: %s", err, string(buf))
+	atoi := func(buf []byte) int {
+		if n, err := strconv.Atoi(string(buf)); err != nil {
+			panic(err)
+		} else {
+			return n
+		}
 	}
 
-	if t, _ := dec.Token(); t != json.Delim('[') {
-		return routes, fmt.Errorf("expected '[' as starting delimeter for `ip tcpmetrics`")
-	}
+	scanner := bufio.NewScanner(file)
+	for i := 0; scanner.Scan(); i++ {
+		line := scanner.Bytes()
+		if i == 0 || len(line) == 0 {
+			continue
+		}
 
-	var route Route
-	for dec.More() {
-		err = dec.Decode(&route)
-		if err != nil {
-			break
+		fields := bytes.Fields(line)
+		if len(fields) < 11 {
+			continue
+		}
+
+		// Iface Destination Gateway Flags RefCnt Use Metric Mask MTU Window IRTT
+		route := Route{
+			Destination: net.IPNet{
+				IP:   dec(fields[1]),
+				Mask: dec(fields[7]),
+			},
+			Gateway:   net.IP(dec(fields[2])),
+			Interface: string(fields[0]),
+			Metric:    atoi(fields[6]),
 		}
 		routes = append(routes, route)
 	}
-	if err != nil {
-		return routes, err
+
+	if err := scanner.Err(); err != nil {
+		return nil, err
 	}
 
-	if t, _ := dec.Token(); t != json.Delim(']') {
-		return routes, fmt.Errorf("expected ']' as closing delimeter for tcpmetrics")
-	}
-	return routes, nil
+	return
 
 }
 
