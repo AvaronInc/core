@@ -35,7 +35,8 @@ func (k Key) Path() string {
 	return strings.Replace(k.String(), "/", "-", -1)
 }
 
-func (k Key) GlobalAddress() (n net.IPNet) {
+func (k Key) GlobalAddress() *net.IPNet {
+	var n net.IPNet
 	n.IP = make([]byte, net.IPv6len)
 	n.Mask = make([]byte, net.IPv6len)
 
@@ -55,5 +56,5 @@ func (k Key) GlobalAddress() (n net.IPNet) {
 		n.IP[i+len(prefix)] = k[i]
 	}
 
-	return
+	return &n
 }
