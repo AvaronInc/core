@@ -268,6 +268,32 @@ func handle(ctx context.Context, req *http.Request, conn net.Conn) (code int, he
 		header = http.Header{
 			"Content-Type": []string{"application/json"},
 		}
+	case "/api/peers":
+		switch req.Method {
+		case "GET":
+			info, err := GetPeerInfo()
+			if err != nil {
+				return http.StatusInternalServerError, nil, nil
+			}
+			log.Println("peer info", info)
+
+			var w io.WriteCloser
+			r, w = io.Pipe()
+			enc := json.NewEncoder(w)
+			go func(){
+				defer w.Close()
+				err := enc.Encode(info)
+				if err != nil {
+					log.Println("error encoding peers:", err)
+				}
+			}()
+
+		default:
+			return http.StatusMethodNotAllowed, nil, nil
+		}
+		header = http.Header{
+			"Content-Type": []string{"application/json"},
+		}
 	case "/api/logs":
 		if req.Method != "GET" {
 			return http.StatusMethodNotAllowed, nil, nil
