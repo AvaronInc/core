@@ -12,7 +12,7 @@ SRC=\
 	public/aim/index.js \
 	public/containers/index.js \
 	public/dashboard/index.js \
-	public/devices/index.js \
+	public/peers/index.js \
 	public/dns/index.js \
 	public/firewall/index.js \
 	public/logs/index.js \
