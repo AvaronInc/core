@@ -358,7 +358,7 @@ func handle(ctx context.Context, req *http.Request, conn net.Conn) (code int, he
 
 			var pw io.WriteCloser
 
-			qr := exec.Command("qrencode", "-t", "SVG")
+			qr := exec.Command("sh", "-c", "qrencode -t SVG | grep -v '<?' | grep -v '<!'")
 
 			if pw, err = qr.StdinPipe(); err != nil {
 				log.Println("failed spawning qrencode pipe:", err)

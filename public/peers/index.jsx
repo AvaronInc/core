@@ -5,7 +5,24 @@ import ReactDOM from 'react-dom/client';
 
 const Peers = () => {
 	const [peers,       setPeers] = useState({})
+	const [qr,      setQR] = useState(false)
+	const svg = useRef(null)
 
+
+	useEffect(() => {
+		if (!qr || !svg.current) {
+			console.log("svg.current", svg.current)
+			return
+		}
+
+		const promise = fetch("/api/wireguard", { method: "POST" })
+			.then(r => r.text())
+			.then(t => (console.log("setting inner html"), (svg.current.innerHTML = t)))
+
+		return () => {
+			promise.finally(() => svg.current.innerHTML = "")
+		}
+	}, [qr])
 	useEffect(() => {
 		fetch("/api/wireguard")
 			.then(r => r.json())
@@ -56,7 +73,7 @@ const Peers = () => {
 
 	return (
 		<Frame>
-			<div class="d-flex flex-row w-100">
+			<div class="d-flex flex-column w-100">
 				<div class="card text-bg-dark flex-fill overflow-x-auto">
 					<div class="card-header">
 						Wireguard Peers
@@ -78,6 +95,17 @@ const Peers = () => {
 								{rows}
 							</tbody>
 						</table>
+						<div class="w-100"  >
+							<div class="mb-1 flex-2" ref={svg}>
+							</div>
+							<button
+								type="button"
+								class={"btn " + (qr ? "btn-primary" : "btn-success")}
+								onClick={() => setQR(qr => !qr)}
+							>
+								{qr ? "Hide" : "Add"}
+							</button>
+						</div>
 					</div>
 				</div>
 			</div>
