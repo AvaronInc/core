@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os/exec"
@@ -29,6 +30,20 @@ type Interface struct {
 	Peers         map[vertex.Key]*Peer `json:"peers"`
 }
 
+func PublicKey(r io.Reader) (k vertex.Key, err error) {
+	// reading wireguard public key
+	cmd := exec.Command("/usr/bin/wg", "pubkey")
+	cmd.Stdin = r
+
+	var buf []byte
+	if buf, err = cmd.Output(); err != nil {
+		return
+	}
+
+	_, err = k.UnmarshalText(buf)
+
+	return
+}
 
 func Interfaces(ctx context.Context) (map[vertex.Key]*Interface, error) {
 	var (

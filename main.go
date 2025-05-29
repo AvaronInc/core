@@ -728,15 +728,20 @@ func main() {
 
 	log.Printf("getting wireguard public key...\n")
 
-	// reading wireguard public key
-	cmd := exec.Command("/usr/bin/sh", "-c", "/usr/bin/wg pubkey < wireguard/private")
-	if out, err := cmd.Output(); err != nil {
-		log.Println("failed to start wireguard for public-key derivation:", err)
-		os.Exit(1)
-	} else if _, err = PublicWireguardKey.UnmarshalText(out); err != nil {
-		log.Println("failed to parse wireguard key:", err)
+	var file *os.File
+	file, err = os.Open("wireguard/private")
+	if err != nil {
+		log.Println("failed to open wireguard/private:", err)
 		os.Exit(1)
 	}
+
+	// reading wireguard public key
+	if PublicWireguardKey, err = wg.PublicKey(file); err != nil {
+		log.Println("failed to dervice public key:", err)
+		os.Exit(1)
+	}
+
+	log.Println("derived public key:", PublicWireguardKey)
 
 	buf, err := os.ReadFile("pid")
 	if err != nil && os.IsNotExist(err) {
