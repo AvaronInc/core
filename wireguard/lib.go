@@ -3,7 +3,6 @@ package wireguard
 import (
 	"avaron/vertex"
 	"bufio"
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -36,12 +35,13 @@ func GenerateKeyPair() (public, private vertex.Key, err error) {
 	cmd := exec.Command("/usr/bin/wg", "genkey")
 
 	var buf []byte
-	if buf, err = cmd.Output(); err != nil {
+	if buf, err = cmd.CombinedOutput(); err != nil {
+		err = fmt.Errorf("exec error: %+v; output: %s", err, string(buf))
 		return
 	}
 
 	_, err = private.UnmarshalText(buf)
-	public, err = PublicKey(bytes.NewReader(private[:]))
+	public, err = PublicKey(strings.NewReader(private.String()))
 
 	return
 }
@@ -52,7 +52,8 @@ func PublicKey(r io.Reader) (k vertex.Key, err error) {
 	cmd.Stdin = r
 
 	var buf []byte
-	if buf, err = cmd.Output(); err != nil {
+	if buf, err = cmd.CombinedOutput(); err != nil {
+		err = fmt.Errorf("exec error: %+v; output: %s", err, string(buf))
 		return
 	}
 
