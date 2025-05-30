@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/base64"
 	"io"
-	"log"
 	"net"
 	"strings"
 )
@@ -20,7 +19,6 @@ func (k *Key) UnmarshalText(buf []byte) (int64, error) {
 		return 0, io.ErrShortBuffer
 	}
 
-	log.Printf("decoding buf: '%s'\n", buf[:])
 	_, err := base64.StdEncoding.Decode(k[:], bytes.TrimSpace(buf[:]))
 	return int64(len(buf)), err
 }

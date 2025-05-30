@@ -6,7 +6,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
+	_ "log"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -103,7 +103,6 @@ func Interfaces(ctx context.Context) (map[vertex.Key]*Interface, error) {
 		}
 
 		k, v := line[:j], strings.TrimSpace(line[j+1:])
-		log.Println("key:", k, "value:", v)
 
 		switch state {
 		case StateNone:
@@ -124,7 +123,6 @@ func Interfaces(ctx context.Context) (map[vertex.Key]*Interface, error) {
 					return m, err
 				}
 				i.Peers[key] = peer
-				log.Println("decoded peer")
 			default:
 				return m, fmt.Errorf("failed to match state in wg output: %s", line)
 			}
