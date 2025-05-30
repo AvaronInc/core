@@ -392,6 +392,34 @@ func handle(ctx context.Context, req *http.Request, conn net.Conn) (code int, he
 			fmt.Fprintf(pw, "Endpoint = %s:%d\n", ip.String(), 51820)
 			fmt.Fprintf(pw, "\n")
 			pw.Close()
+		case "DELETE":
+			buf, err := io.ReadAll(req.Body)
+			if err != nil {
+				log.Println("failed reading body:", err)
+				return http.StatusInternalServerError, nil, nil
+			}
+
+			var key vertex.Key
+			_, err = key.UnmarshalText(buf)
+			if err != nil {
+				log.Println("failed unmarshalling key:", err)
+				return http.StatusInternalServerError, nil, nil
+			}
+
+			err = os.RemoveAll(filepath.Join("peers", key.Path()))
+			if err != nil {
+				log.Println("failed deleting peer:", err)
+				return http.StatusNotFound, nil, nil
+			}
+			log.Println("deleted", key.Path())
+
+			cmd := exec.Command("sudo", "wg", "set", "avaron", "peer", key.String(), "remove")
+			buf, err = cmd.CombinedOutput()
+			if err != nil {
+				log.Println("failed removing peer", string(buf), err)
+				return http.StatusInternalServerError, nil, nil
+
+			}
 		default:
 			return http.StatusMethodNotAllowed, nil, nil
 		}
