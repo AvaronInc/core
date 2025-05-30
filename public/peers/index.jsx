@@ -1,29 +1,15 @@
-import React, {StrictMode, useState, useEffect, useRef} from 'react'
+import React, {StrictMode, useState, useEffect, useRef, useCallback} from 'react'
 import Frame from '../frame'
 import {size} from '../util'
 import ReactDOM from 'react-dom/client';
 
 const Peers = () => {
 	const [peers,       setPeers] = useState({})
-	const [qr,      setQR] = useState(false)
-	const svg = useRef(null)
+	const [qr,      setQR] = useState(null)
+	const [fetching,      setFetching] = useState(false)
+	const ref = useRef(null)
 
-
-	useEffect(() => {
-		if (!qr || !svg.current) {
-			console.log("svg.current", svg.current)
-			return
-		}
-
-		const promise = fetch("/api/wireguard", { method: "POST" })
-			.then(r => r.text())
-			.then(t => (console.log("setting inner html"), (svg.current.innerHTML = t)))
-
-		return () => {
-			promise.finally(() => svg.current.innerHTML = "")
-		}
-	}, [qr])
-	useEffect(() => {
+	const fetchPeers = useCallback(() => {
 		fetch("/api/wireguard")
 			.then(r => r.json())
 			.then(interfaces => {
@@ -39,13 +25,38 @@ const Peers = () => {
 				return peers
 			})
 			.then(setPeers)
-	}, [])
+	}, [setPeers])
+
+	const create = useCallback(() => {
+		setFetching(true)
+		const promise = fetch("/api/wireguard", { method: "POST" })
+			.then(r => r.text())
+			.then(t => {
+				console.log("setting inner html")
+				setQR(t)
+				fetchPeers()
+			})
+	}, [setFetching, fetchPeers, setQR])
+
+	useEffect(fetchPeers, [])
+
+	useEffect(() => {
+		if (qr) {
+			ref.current.innerHTML = qr
+			setFetching(false)
+			return () => ref.current.innerHTML = ""
+		}
+	}, [qr, fetchPeers])
 
 	const rows = new Array(size(peers))
 	let i = 0
 
 	for (const key in peers) {
 		const peer = peers[key]
+		const fn = (key) => {
+			fetch("/api/wireguard", {method: "DELETE", body: key})
+				.then(fetchPeers)
+		}
 
 		rows[i++] = (
 			<tr
@@ -60,6 +71,7 @@ const Peers = () => {
 				<td>
 					<button
 						disabled={peer.interface !== "avaron"}
+						onClick={fn.bind(null, key)}
 						type="button"
 						class="btn btn-danger"
 					>
@@ -68,6 +80,33 @@ const Peers = () => {
 				</td>
 
 			</tr>
+		)
+	}
+
+
+	let Button
+	console.log("fetching", fetching)
+	if (fetching) {
+		Button = null
+	} else if (qr) {
+		Button = (
+			<button
+				type="button"
+				class={"ms-auto me-2 btn " + (qr ? "btn-primary" : "btn-success")}
+				onClick={() => setQR(null)}
+			>
+				Hide
+			</button>
+		)
+	} else {
+		Button = (
+			<button
+				type="button"
+				class={"ms-auto me-2 btn " + (qr ? "btn-primary" : "btn-success")}
+				onClick={create}
+			>
+				Create
+			</button>
 		)
 	}
 
@@ -95,16 +134,10 @@ const Peers = () => {
 								{rows}
 							</tbody>
 						</table>
-						<div class="w-100"  >
-							<div class="mb-1 flex-2" ref={svg}>
+						<div class="w-100 d-flex"  >
+							<div class="mb-1 flex-grow-1" ref={ref}>
 							</div>
-							<button
-								type="button"
-								class={"btn " + (qr ? "btn-primary" : "btn-success")}
-								onClick={() => setQR(qr => !qr)}
-							>
-								{qr ? "Hide" : "Add"}
-							</button>
+							{Button}
 						</div>
 					</div>
 				</div>
