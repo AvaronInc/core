@@ -36,6 +36,7 @@ PATH=$HOME/.local/bin/:$PATH &&
 	sudo apt-get -y install \
 		apt-transport-https \
 		autoconf \
+		bind9 \
 		curl \
 		elasticsearch \
 		gcc \

@@ -26,6 +26,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"text/template"
 	"time"
 )
 
@@ -791,6 +792,51 @@ func main() {
 
 	go ServeHTTP(ctx)
 	go HealthChecker(ctx)
+
+	{
+		r, w := io.Pipe()
+		named := exec.CommandContext(ctx, "/bin/named", "-f", "-g", "-c", "/dev/stdin")
+		named.Stdin  = r
+		named.Stderr = os.Stderr
+		named.Stdout = os.Stderr
+
+		err = named.Start()
+		if err != nil {
+			log.Println("failed starting named:", err)
+			os.Exit(1)
+		}
+
+		t, err := template.ParseFiles("/tmp/named.conf")
+		if err != nil {
+			log.Println("error parsing template:", err)
+			os.Exit(1)
+
+		}
+
+		err = t.Execute(w, struct {
+			Directory string
+			Reverse string
+			Zone string
+			ProcessIDFile string
+		}{
+			"/tmp",
+			"",
+			"",
+			"",
+		})
+
+		if err != nil {
+			log.Println("error executing template:", err)
+			os.Exit(1)
+		}
+		go func() {
+			err := named.Wait();
+			if err != nil {
+				log.Panicln("named exited:", err)
+			}
+		}()
+	}
+
 
 	links, err := network.List(ctx)
 	if err != nil {
