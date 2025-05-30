@@ -634,6 +634,11 @@ func Shell(ctx context.Context, r io.Reader) error {
 }
 
 func WritePeerConfiguration(w io.Writer, us *vertex.Key, peers map[vertex.Key]PeerInfo) (n int, e error) {
+	n, e = fmt.Fprintf(w, "sudo /usr/sbin/ip route replace fc00:a7a0::/32 dev avaron src %s\n", PublicWireguardKey.GlobalAddress().IP.String())
+	if e != nil {
+		return
+	}
+
 	for key, peer := range peers {
 		ours, theirs := GenerateLinkLocal(us, &key)
 		remote := key.GlobalAddress()
