@@ -381,6 +381,14 @@ func handle(ctx context.Context, req *http.Request, conn net.Conn) (code int, he
 				return http.StatusInternalServerError, nil, nil
 			}
 
+			cmd := exec.Command("sudo", "wg", "set", "avaron", "peer", public.String())
+			buf, err = cmd.CombinedOutput()
+			if err != nil {
+				log.Println("failed adding peer", string(buf), err)
+				return http.StatusInternalServerError, nil, nil
+
+			}
+
 			fmt.Fprintf(pw, "[Interface]\n")
 			fmt.Fprintf(pw, "Address = %s/32\n", public.GlobalAddress().IP.String())
 			fmt.Fprintf(pw, "PrivateKey = %s\n", private.String())
