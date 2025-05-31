@@ -4,6 +4,3 @@
 [submodule "contrib/arkime"]
 	path = contrib/arkime
 	url = https://github.com/arkime/arkime
-[submodule "contrib/llama.cpp"]
-	path = contrib/arkime
-	url = https://github.com/ggml.org/llama.cpp
