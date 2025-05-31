@@ -931,7 +931,7 @@ func main() {
 				}
 				err := Sync(ctx, &key, UpdateNode)
 				if err != nil {
-					log.Println("error fething updates:", err)
+					log.Println("error fetching updates:", err)
 				}
 			}
 		}(key)
