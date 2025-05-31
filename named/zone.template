@@ -1,0 +1,16 @@
+$TTL 30
+
+avaron.lan. IN SOA  ns.avaron.lan.  admin.avaron.lan. (
+	2014072184
+	28800
+	3600
+	604800
+	38400 )
+	NS ns.avaron.lan.
+
+$TTL 30
+
+www.avaron.lan. AAAA {{ .IPv6 }}
+avaron.lan. AAAA {{ .IPv6 }}
+
+ns.avaron.lan. AAAA ::1

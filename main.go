@@ -675,10 +675,10 @@ var (
 )
 
 var (
-	//go:embed named/named.conf.template
+	//go:embed named/conf.template
 	NamedConfiguration string
 
-	//go:embed named/avaron.zone.template
+	//go:embed named/zone.template
 	NamedZone string
 )
 
