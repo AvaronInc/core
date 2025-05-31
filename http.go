@@ -2,8 +2,8 @@ package main
 
 import (
 	"avaron/llama"
-	"avaron/vertex"
 	network "avaron/net"
+	"avaron/vertex"
 	wg "avaron/wireguard"
 	"bufio"
 	"bytes"
@@ -284,7 +284,7 @@ func handle(ctx context.Context, req *http.Request, conn net.Conn) (code int, he
 			var w io.WriteCloser
 			r, w = io.Pipe()
 			enc := json.NewEncoder(w)
-			go func(){
+			go func() {
 				defer w.Close()
 				err := enc.Encode(info)
 				if err != nil {

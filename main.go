@@ -309,9 +309,9 @@ type Node struct {
 	Name       string                        `json:"name"`
 	Location   *whois.Info                   `json:"location"`
 	Interfaces map[string]*network.Interface `json:"interfaces"`
-	Tunnels    map[vertex.Key]*wg.Interface      `json:"tunnels"`
+	Tunnels    map[vertex.Key]*wg.Interface  `json:"tunnels"`
 	TCPMetrics []network.TCPMetric           `json:"metrics"`
-	Routes     map[string]*network.Route      `json:"routes"`
+	Routes     map[string]*network.Route     `json:"routes"`
 }
 
 func ListServices(ctx context.Context) (m map[string]systemd.UnitStatus, err error) {
@@ -682,7 +682,6 @@ var (
 	NamedZone string
 )
 
-
 func main() {
 	log.SetFlags(log.Lshortfile)
 	if len(os.Args) < 1 {
@@ -852,10 +851,10 @@ func main() {
 		}
 
 		t.Execute(f, struct {
-			Directory string
+			Directory     string
 			ProcessIDFile string
-			Reverse string
-			Zone string
+			Reverse       string
+			Zone          string
 		}{
 			"/tmp",
 			"/tmp/named-pid",
@@ -875,15 +874,13 @@ func main() {
 			os.Exit(1)
 		}
 
-
 		go func() {
-			err := named.Wait();
+			err := named.Wait()
 			if err != nil {
 				log.Panicln("named exited:", err)
 			}
 		}()
 	}
-
 
 	links, err := network.List(ctx)
 	if err != nil {
