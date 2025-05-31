@@ -794,11 +794,65 @@ func main() {
 	go HealthChecker(ctx)
 
 	{
-		r, w := io.Pipe()
-		named := exec.CommandContext(ctx, "/bin/named", "-f", "-g", "-c", "/dev/stdin")
-		named.Stdin  = r
+		named := exec.CommandContext(ctx, "/bin/sudo", "-S", "/bin/named", "-f", "-g", "-c", "/tmp/conf")
 		named.Stderr = os.Stderr
 		named.Stdout = os.Stderr
+
+		dir := os.Getenv("NAMED_DIR")
+		if dir == "" {
+			dir = "/tmp"
+		}
+
+		t, err := template.ParseGlob(filepath.Join(dir, "named", "*.template"))
+		if err != nil {
+			log.Println("EEE parsing template:", err)
+			os.Exit(1)
+
+		}
+
+		f, err := os.OpenFile("/tmp/zone", os.O_CREATE|os.O_WRONLY, 0666)
+		if err != nil {
+			log.Println("error opening /tmp/zone", err)
+			os.Exit(1)
+
+		}
+
+		err = t.ExecuteTemplate(f, "avaron.zone.template", struct {
+			IPv6 string
+		}{
+			PublicWireguardKey.GlobalAddress().IP.String(),
+		})
+		if err != nil {
+			log.Println("error executing template:", err)
+			os.Exit(1)
+		}
+
+		f.Close()
+
+		f, err = os.OpenFile("/tmp/conf", os.O_CREATE|os.O_WRONLY, 0666)
+		if err != nil {
+			log.Println("error opening /tmp/zone", err)
+			os.Exit(1)
+
+		}
+
+		err = t.ExecuteTemplate(f, "named.conf.template", struct {
+			Directory string
+			ProcessIDFile string
+			Reverse string
+			Zone string
+		}{
+			"/tmp",
+			"/tmp/named-pid",
+			"",
+			"/tmp/zone",
+		})
+		if err != nil {
+			log.Println("error executing template:", err)
+			os.Exit(1)
+		}
+
+		f.Close()
 
 		err = named.Start()
 		if err != nil {
@@ -806,29 +860,7 @@ func main() {
 			os.Exit(1)
 		}
 
-		t, err := template.ParseFiles("/tmp/named.conf")
-		if err != nil {
-			log.Println("error parsing template:", err)
-			os.Exit(1)
 
-		}
-
-		err = t.Execute(w, struct {
-			Directory string
-			Reverse string
-			Zone string
-			ProcessIDFile string
-		}{
-			"/tmp",
-			"",
-			"",
-			"",
-		})
-
-		if err != nil {
-			log.Println("error executing template:", err)
-			os.Exit(1)
-		}
 		go func() {
 			err := named.Wait();
 			if err != nil {

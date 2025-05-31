@@ -1,0 +1,25 @@
+options {
+	directory "{{ .Directory }}";
+	pid-file  "{{ .ProcessIDFile }}";
+
+	auth-nxdomain     no;
+	dnssec-validation no;
+	hostname          none;
+	recursion         yes;
+	server-id         none;
+	version	          none;
+
+	allow-query	        { localhost; localnets; };
+	allow-query-cache       { localhost; localnets; };
+	allow-recursion	        { localhost; localnets; };
+	allow-transfer	        { localhost; localnets; };
+	allow-update	        { localhost; localnets; };
+	allow-update-forwarding { localhost; localnets; };
+	allow-notify            { localhost; localnets; };
+};
+
+zone "avaron.lan" IN {
+	type master;
+	file "{{ .Zone }}";
+};
+
