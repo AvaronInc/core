@@ -9,6 +9,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	systemd "github.com/coreos/go-systemd/v22/dbus"
@@ -673,6 +674,15 @@ var (
 	RequestNodes = make(chan io.WriteCloser)
 )
 
+var (
+	//go:embed named/named.conf.template
+	NamedConfiguration string
+
+	//go:embed named/avaron.zone.template
+	NamedZone string
+)
+
+
 func main() {
 	log.SetFlags(log.Lshortfile)
 	if len(os.Args) < 1 {
@@ -803,13 +813,7 @@ func main() {
 			dir = "/tmp"
 		}
 
-		t, err := template.ParseGlob(filepath.Join(dir, "named", "*.template"))
-		if err != nil {
-			log.Println("EEE parsing template:", err)
-			os.Exit(1)
-
-		}
-
+		os.Remove("/tmp/zone")
 		f, err := os.OpenFile("/tmp/zone", os.O_CREATE|os.O_WRONLY, 0666)
 		if err != nil {
 			log.Println("error opening /tmp/zone", err)
@@ -817,7 +821,12 @@ func main() {
 
 		}
 
-		err = t.ExecuteTemplate(f, "avaron.zone.template", struct {
+		t, err := template.New("").Parse(NamedZone)
+		if err != nil {
+			log.Println("failed parsing it", NamedZone)
+		}
+
+		err = t.Execute(f, struct {
 			IPv6 string
 		}{
 			PublicWireguardKey.GlobalAddress().IP.String(),
@@ -829,6 +838,7 @@ func main() {
 
 		f.Close()
 
+		os.Remove("/tmp/conf")
 		f, err = os.OpenFile("/tmp/conf", os.O_CREATE|os.O_WRONLY, 0666)
 		if err != nil {
 			log.Println("error opening /tmp/zone", err)
@@ -836,7 +846,12 @@ func main() {
 
 		}
 
-		err = t.ExecuteTemplate(f, "named.conf.template", struct {
+		t, err = template.New("").Parse(NamedConfiguration)
+		if err != nil {
+			log.Println("failed parsing it", NamedConfiguration)
+		}
+
+		t.Execute(f, struct {
 			Directory string
 			ProcessIDFile string
 			Reverse string
