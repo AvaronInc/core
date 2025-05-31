@@ -67,7 +67,7 @@ func ServeHTTP(ctx context.Context) {
 	if s := os.Getenv("SERVE_DIR"); s != "" {
 		ServeDirectory = s
 	} else {
-		ServeDirectory = "/tmp/public"
+		ServeDirectory = "public"
 	}
 
 	config.Certificates[0], err = tls.LoadX509KeyPair("/etc/letsencrypt/live/isreal.estate/fullchain.pem",

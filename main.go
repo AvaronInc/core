@@ -803,7 +803,7 @@ func main() {
 	go HealthChecker(ctx)
 
 	{
-		named := exec.CommandContext(ctx, "/bin/sudo", "-S", "/bin/named", "-f", "-g", "-c", "/tmp/conf")
+		named := exec.CommandContext(ctx, "/bin/sudo", "-S", "/usr/local/bin/named", "-f", "-g", "-c", "/tmp/conf")
 		named.Stderr = os.Stderr
 		named.Stdout = os.Stderr
 

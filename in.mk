@@ -58,9 +58,10 @@ install: build
 	mkdir -p $(PREFIX)/lib/systemd/system/
 	cp -f $(BIN).service $(PREFIX)/lib/systemd/system/$(BIN).service
 	cp -f $(BIN).rules /etc/polkit-1/rules.d/$(BIN).rules
+	cp -f /usr/sbin/named /usr/local/bin/named
 
 	printf "%s ALL=(ALL) !ALL\n" "$(BIN)"  > "/etc/sudoers.d/$(BIN)"
-	printf "%s ALL=(ALL) NOPASSWD: /usr/sbin/ip, /usr/bin/wg, /usr/sbin/ethtool, /usr/local/sbin/ethtool, /usr/bin/named\n" "$(BIN)" >> "/etc/sudoers.d/$(BIN)"
+	printf "%s ALL=(ALL) NOPASSWD: /usr/sbin/ip, /usr/bin/wg, /usr/sbin/ethtool, /usr/local/sbin/ethtool, /usr/local/bin/named\n" "$(BIN)" >> "/etc/sudoers.d/$(BIN)"
 
 	if id $(BIN) >/dev/null 2>&1; then \
 		printf "user %s already exists - not recreating\n" $(BIN); \
@@ -72,6 +73,8 @@ install: build
 		su $(BIN) sh -c 'cd ~/wireguard && wg genkey | tee private | wg pubkey > public' && \
 		su $(BIN) sh -c 'cd ~/wireguard && chmod 400 private'; \
 	fi
+
+	find public | grep -v '.jsx$$' | cpio -o | su $(BIN) sh -c 'cd ~; cpio -i'
 
 uninstall:
 	rm -f /etc/$(BIN)/key \
