@@ -38,6 +38,7 @@ PATH=$HOME/.local/bin/:$PATH &&
 		autoconf \
 		bind9 \
 		curl \
+		cmake \
 		elasticsearch \
 		gcc \
 		git \
@@ -52,10 +53,10 @@ PATH=$HOME/.local/bin/:$PATH &&
 		libmaxminddb-dev \
 		libmnl-dev \
 		libnghttp2-dev \
-		libnl-genl-3-dev
+		libnl-genl-3-dev \
 		libpcap-dev \
 		libpcre2-dev \
-		libsystemd-dev
+		libsystemd-dev \
 		libtool \
 		libwww-perl \
 		libyaml-dev \
