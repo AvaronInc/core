@@ -714,6 +714,8 @@ func main() {
 		os.Exit(1)
 	}
 
+	llama.Init()
+
 	createPIDFile := func() {
 		buf := fmt.Sprintf("%d\n", os.Getpid())
 		err := os.WriteFile("pid", []byte(buf), 0644)
@@ -804,8 +806,8 @@ func main() {
 
 	{
 		named := exec.CommandContext(ctx, "/bin/sudo", "-S", "/usr/local/bin/named", "-f", "-g", "-c", "/tmp/conf")
-		named.Stderr = os.Stderr
-		named.Stdout = os.Stderr
+		//named.Stderr = os.Stderr
+		//named.Stdout = os.Stderr
 
 		dir := os.Getenv("NAMED_DIR")
 		if dir == "" {

@@ -384,6 +384,7 @@ func handle(ctx context.Context, req *http.Request, conn net.Conn) (code int, he
 			fmt.Fprintf(pw, "[Interface]\n")
 			fmt.Fprintf(pw, "Address = %s/32\n", public.GlobalAddress().IP.String())
 			fmt.Fprintf(pw, "PrivateKey = %s\n", private.String())
+			fmt.Fprintf(pw, "DNS = %s\n", public.GlobalAddress().IP.String())
 			fmt.Fprintf(pw, "\n")
 
 			fmt.Fprintf(pw, "[Peer]\n")
@@ -455,95 +456,22 @@ func handle(ctx context.Context, req *http.Request, conn net.Conn) (code int, he
 			return http.StatusMethodNotAllowed, nil, nil
 		}
 
-		dec := json.NewDecoder(req.Body)
-		if t, _ := dec.Token(); t != json.Delim('[') {
-			log.Println("error reading services '[' for restart:", err)
-			return http.StatusInternalServerError, nil, nil
-		}
-
-		prompt := &strings.Builder{}
-		var m Message
-		for dec.More() {
-			if err = dec.Decode(&m); err != nil {
-				break
-			}
-			switch m.Role {
-			case "user":
-				fmt.Fprintf(prompt, "[INST]%s[/INST]", m.Content)
-			default:
-				fmt.Fprintf(prompt, "%s", m.Content)
-			}
-		}
-
-		if t, _ := dec.Token(); t != json.Delim(']') {
-			err = fmt.Errorf("error reading services ']' for restart: %+v", err)
-			return http.StatusInternalServerError, nil, nil
-		}
-
-		if err != nil {
-			log.Println("error decoding message in chat request:", err)
-			return http.StatusBadRequest, nil, nil
-		}
-
-		var buf []byte
-		buf, err = json.Marshal(llama.Request{
-			Prompt: prompt.String(),
-			Model:  "mixtral.gguf",
-			Stream: true,
-		})
-
-		var (
-			lreq *http.Request
-			lres *http.Response
-		)
-
-		lreq, err = http.NewRequestWithContext(ctx, "POST", "http://localhost/completions", bytes.NewReader(buf))
-		if err != nil {
-			log.Println("error forming llama request:", err)
-			return http.StatusInternalServerError, nil, nil
-		}
-
-		lres, err = llama.Client.Do(lreq)
+		req.RequestURI = ""
+		req.URL.Scheme = "http"
+		req.URL.Host = "localhost"
+		req.URL.Path = "/api/completions"
+		res, err := llama.Client.Do(req)
 		if err != nil {
 			log.Println("error forwarding request to llama:", err)
 			return http.StatusInternalServerError, nil, nil
-		} else if lres.StatusCode < 200 || lres.StatusCode >= 300 {
+		} else if res.StatusCode < 200 || res.StatusCode >= 300 {
 			log.Println("error forwarding request to llama:", err)
 			return http.StatusInternalServerError, nil, nil
 		}
 
-		var w io.WriteCloser
-		r, w = io.Pipe()
-		var token llama.Token
-		scanner := bufio.NewScanner(lres.Body)
+		r = res.Body
 
-		go func() {
-			defer w.Close()
-			for scanner.Scan() {
-				line := scanner.Text()
-				switch {
-				case len(line) == 0:
-					continue
-				case strings.HasPrefix(line, "data: "):
-					line = strings.TrimPrefix(line, "data: ")
-					break
-				default:
-					log.Panicln("unexpected line from llama-server stream:", line)
-				}
-				if err = json.Unmarshal([]byte(line), &token); err != nil {
-					log.Panicln("error marshalling llama json:", err, line)
-				}
-				_, err = w.Write([]byte(token.Content))
-				if err != nil {
-					log.Println("error writing llama token to response body:", err, line)
-				}
-
-			}
-		}()
-
-		header = http.Header{
-			"Content-Type": []string{"application/json"},
-		}
+		header = res.Header
 	case "/api/services":
 		if req.Method != "GET" {
 			return http.StatusMethodNotAllowed, nil, nil

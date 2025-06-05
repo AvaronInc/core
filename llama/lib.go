@@ -30,7 +30,7 @@ var (
 	Client http.Client
 )
 
-func init() {
+func Init() {
 	host := os.Getenv("LLAMA_SERVER")
 	log.Println("host", host)
 	if  host != "" {
