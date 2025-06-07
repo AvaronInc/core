@@ -3,47 +3,6 @@ import Frame from '../frame'
 import {size} from '../util'
 import ReactDOM from 'react-dom/client';
 
-const test = `
-[INST]show me bold & italic in markdown[/INST] Sure! Here is how you can make text bold and italic in Markdown:
-
-* To make text bold in Markdown, you can surround the text with two asterisks (\`**\`) or two underscores (\`__\`) on each side. For example:
-
-\`**This is bold text.**\`
-
-or
-
-\`__This is bold text.__\`
-
-* To make text italic in Markdown, you can surround the text with one asterisk (\`*\`) or one underscore (\`_\`) on each side. For example:
-
-This is escaped \\*asterisk\\*.
-
-\`*This is italic text.*\`
-
-or
-
-\`\`\`
-foo bar ipsum code
-\`\`\`
-
-
-\`_This is italic text._\`
-
-* To make text both bold and italic in Markdown, you can surround the text with three asterisks (\`***\`) or three underscores (\`___\`) on each side. For example:
-
-\`***This is bold and italic text.***\`
-
-or
-
-\`___This is bold and italic text.___\`
-
-I hope this helps! Let me know if you have any other questions.
-
-**This is bold text.**
-***This is bold and italic text.***
-
-`
-
 function parseTick(input) {
 	const output = []
 	let i, j = 0
@@ -235,8 +194,8 @@ function markdown(input) {
 
 
 const Chat = () => {
-	const [prompt,     setPrompt] = useState(test)
-	const [logs,         setLogs] = useState([])
+	const [prompt,          setPrompt] = useState("")
+	const [logs,              setLogs] = useState([])
 	const [textArea, setTextAreaInner] = useState(false)
 	const input               = useRef("")
 	const xhr                 = useRef(null)
