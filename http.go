@@ -459,7 +459,7 @@ func handle(ctx context.Context, req *http.Request, conn net.Conn) (code int, he
 		req.RequestURI = ""
 		req.URL.Scheme = "http"
 		req.URL.Host = "localhost"
-		req.URL.Path = "/api/completions"
+		req.URL.Path = "/completions"
 		res, err := llama.Client.Do(req)
 		if err != nil {
 			log.Println("error forwarding request to llama:", err)
