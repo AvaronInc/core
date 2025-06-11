@@ -25,29 +25,39 @@ If it's UNHEALTHY, say UNHEALTHY, followed by the command you'd like to run for 
 
 
 Here is an example:
-HEALTHY
-Everything looks good
+
+	HEALTHY
+
+	Everything looks good
 
 
 Here is another example:
-UNHEALTHY
 
-`+"```"+`
-$ ip -br link show
-`+"```"+`
+	UNHEALTHY
 
-Let's run "ip -br link show" to see more about the links
+	`+"```"+`
+	$ ip -br link show
+	`+"```"+`
 
-
-And another:
-HEALTHY
-docker0 is down. who gives a shit
+	Let's run "ip -br link show" to see more about the links
 
 
 And another:
-UNHEALTHY
-$ ping 8.8.8.8
-there's not enough information here. let's try running "ping 8.8.8.8" to confirm that we're able to access the internet.
+
+	HEALTHY
+
+	docker0 is down
+
+
+And another:
+
+	UNHEALTHY
+
+	`+"```"+`
+	$ ping 8.8.8.8
+	`+"```"+`
+
+	there's not enough information here. let's try running `+"`"+`ping 8.8.8.8`+"`"+` to confirm that we're able to access the internet.
 
 `
 
@@ -57,7 +67,10 @@ type Remark struct {
 }
 
 func Healthy(remarks []Remark) bool {
-	for _, r := range remarks {
+	if len(remarks) <= 1 {
+		return true
+	}
+	for _, r := range remarks[1:] {
 		if bytes.Contains(r.Content, []byte("UNHEALTHY")) {
 			return false
 		}
@@ -127,7 +140,7 @@ func Tick(ctx context.Context, writer io.Writer) (err error) {
 		return
 	}
 
-	prompt := fmt.Sprintf("[INST]%s\nthe following is the output of ip -br addr show: %s[/INST]\n", HEALTH_PROMPT, string(buf))
+	prompt := fmt.Sprintf("[INST]%s\nthe following is the output of `ip -br addr show`: \n```\n%s\n```\n[/INST]\n", HEALTH_PROMPT, string(buf))
 	_, err = fmt.Fprintf(writer, "%s", prompt)
 	if err != nil {
 		return
@@ -236,13 +249,13 @@ type Request struct {
 
 var (
 	Get  = make(chan Request)
-	List = make(chan map[int64]bool)
+	List = make(chan map[int64]string)
 )
 
 func Loop(ctx context.Context) {
 	ticker := time.NewTicker(time.Second)
 	dialogues := make(map[time.Time]*mickey.Muxer)
-	times := make(map[int64]bool)
+	listings := make(map[int64]string)
 
 	var (
 		t  time.Time
@@ -269,7 +282,7 @@ func Loop(ctx context.Context) {
 
 	for {
 		select {
-		case List<-times:
+		case List<-listings:
 		case req := <-Get:
 			m, ok := dialogues[time.Unix(req.Time, 0)]
 			if !ok {
@@ -287,15 +300,16 @@ func Loop(ctx context.Context) {
 		case m := <-ch:
 			t = time.Now().Round(time.Second)
 			dialogues[t] = m
-			times = make(map[int64]bool)
+			listings = make(map[int64]string)
 			for t, m := range dialogues {
-				b := false
-				if m.EOF() {
-					buf, _ := io.ReadAll(m.NewReader())
-					b = Healthy(Split(buf))
+				if !m.EOF() {
+					listings[t.Unix()] = "pending"
+				} else if buf, _ := io.ReadAll(m.NewReader()); Healthy(Split(buf)) {
+					listings[t.Unix()] = "healthy"
+				} else {
+					listings[t.Unix()] = "unhealthy"
 				}
 
-				times[t.Unix()] = b
 
 			}
 		case <-ctx.Done():

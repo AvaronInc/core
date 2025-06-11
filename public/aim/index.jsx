@@ -118,7 +118,7 @@ function space(line) {
 function paragraphs(paragraphs) {
 	const base = new Array()
 	for (let i = 0; i < paragraphs.length; i++) {
-		const lines = paragraphs[i].split("\n")
+		const lines = paragraphs[i].split("\n").map(line => line + "\n")
 		const rows = new Array(lines.length)
 
 		if (lines.every(unordered)) {
@@ -166,7 +166,7 @@ function paragraphs(paragraphs) {
 
 function markdown(input) {
 	const output = new Array()
-	const re = /\`\`\`/gm
+	const re = /```/g
 
 	let match, n, i, j = 0
 	for (n = 0, i = 0; i < input.length; n++) {
@@ -178,9 +178,9 @@ function markdown(input) {
 
 		if (n % 2) {
 			output.push((
-				<code>
+				<pre><code>
 					{input.slice(j, i)}
-				</code>
+				</code></pre>
 			))
 		} else {
 			const p = paragraphs(input.slice(j, i).split("\n\n"))
@@ -192,6 +192,13 @@ function markdown(input) {
 	return output
 }
 
+function style(s) {
+	switch (s) {
+	case "healthy": return "success";
+	case "unhealthy": return "danger";
+	default: return "warning";
+	}
+}
 
 const Chat = () => {
 	const [prompt,     setPrompt] = useState("")
@@ -258,7 +265,6 @@ const Chat = () => {
 	}, [setPrompt])
 
 	const focusLog = useCallback((ts) => {
-		console.log("focus", ts)
 		if (xhr.current) {
 			xhr.current.abort()
 			xhr.current = null
@@ -266,9 +272,15 @@ const Chat = () => {
 
 		xhr.current = new XMLHttpRequest();
 		xhr.current.open("GET", "/api/health/" + ts, true);
-		console.log("/api/health/" + ts)
 
 		xhr.current.onreadystatechange = function(e) {
+			switch (e.target.readyState){
+			case 4: break
+			default:
+				if (e.target.responseText.length <= 0) {
+					return
+				}
+			}
 			setPrompt(e.target.responseText)
 		};
 
@@ -289,10 +301,11 @@ const Chat = () => {
 			if (j == -1) {
 				throw "bad prompt"
 			} else if (j > "[INST]".length) {
+				const message = markdown(prompt.slice(i+"[INST]".length, i+j))
 				messages.push((
-					<div class="ms-auto bg-success p-3 pb-1 rounded mb-1">
-						<p class=" text-end" key={i}>
-							{prompt.slice(i+"[INST]".length, i+j)}
+					<div class="ms-auto bg-secondary p-3 pb-1 rounded mb-1">
+						<p key={i}>
+							{message ? message : "..."}
 						</p>
 					</div>
 				))
@@ -314,15 +327,16 @@ const Chat = () => {
 		}
 	}
 
-	const logs = new Array()
+	i = size(entries)
+	const logs = new Array(i)
 	for (entry in entries) {
-		logs.push((
-			<tr onClick={focusLog.bind(null, entry)} id={entry} >
-				<td>
-					{entry}
-				</td>
-				<td>
-					{entries[entry] ? "health" : "unhealthy" }
+		logs[--i] = ((
+			<tr onClick={focusLog.bind(null, entry)} id={entry} class="pb-3">
+				<td><tt>
+					{new Date(entry*1000).toString()}
+				</tt></td>
+				<td class={"m-1 py-1 px-2 rounded text-center bg-"+style(entries[entry])}>
+					{entries[entry]}
 				</td>
 			</tr>
 		))
@@ -331,7 +345,8 @@ const Chat = () => {
 	return (
 		<Frame>
 			<div class="d-flex flex-column w-100">
-				<div class="card text-bg-dark flex-fill overflow-x-auto">
+
+				<div class="card text-bg-dark flex-fill overflow-x-auto mb-2">
 					<div class="card-header">
 						Chat
 					</div>
@@ -362,10 +377,9 @@ const Chat = () => {
 						</div>
 					</div>
 				</div>
-
 				<div class="card text-bg-dark flex-fill overflow-x-auto">
 					<div class="card-header">
-						Logs
+						Health Checks
 					</div>
 					<div class="card-body d-flex flex-column">
 						<table>

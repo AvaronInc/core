@@ -88,7 +88,7 @@ func ServeHTTP(ctx context.Context) {
 	// load balancer - connection times out quicker the more connections there are
 	const (
 		total   = 256
-		timeout = 60 * time.Second
+		timeout = 0 * time.Second
 	)
 
 	var (
@@ -135,18 +135,25 @@ func ServeHTTP(ctx context.Context) {
 		}
 		go func(conn net.Conn) {
 			defer conn.Close()
+			var (
+				d time.Duration
+			)
 
-			t := time.Now().Add(<-durations)
-			conn.SetReadDeadline(t)
+			t := time.Now()
+			if d := <-durations; d != 0 {
+				conn.SetReadDeadline(t.Add(d))
+			}
 
 			reader := bufio.NewReader(conn)
 
 			if req, err := http.ReadRequest(reader); err != nil {
 				log.Println("error reading request:", err)
 			} else {
-				ctx, cancel := context.WithDeadline(ctx, t)
-				defer cancel()
-
+				if d != 0 {
+					var cancel context.CancelFunc
+					ctx, cancel = context.WithDeadline(ctx, t)
+					defer cancel()
+				}
 				res := http.Response{
 					Proto:      "HTTP/1.1",
 					ProtoMajor: 1,
