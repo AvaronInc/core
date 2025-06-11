@@ -57,8 +57,9 @@ install: build
 	cp -f $(BIN) $(PREFIX)/bin/$(BIN)
 	mkdir -p $(PREFIX)/lib/systemd/system/
 	cp -f $(BIN).service $(PREFIX)/lib/systemd/system/$(BIN).service
+	cp -f llama-server.service $(PREFIX)/lib/systemd/system/llama-server.service
 	cp -f $(BIN).rules /etc/polkit-1/rules.d/$(BIN).rules
-	cp -f /usr/sbin/named /usr/local/bin/named
+	systemctl daemon-reload
 
 	printf "%s ALL=(ALL) !ALL\n" "$(BIN)"  > "/etc/sudoers.d/$(BIN)"
 	printf "%s ALL=(ALL) NOPASSWD: /usr/sbin/ip, /usr/bin/wg, /usr/sbin/ethtool, /usr/local/sbin/ethtool, /usr/local/bin/named\n" "$(BIN)" >> "/etc/sudoers.d/$(BIN)"

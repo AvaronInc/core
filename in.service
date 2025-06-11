@@ -1,6 +1,7 @@
 [Unit]
 Description=Avaron
 After=network-online.target
+Requires=named.service llama-server.service
 
 [Service]
 Type=simple

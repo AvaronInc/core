@@ -1,0 +1,17 @@
+[Unit]
+Description=Llama Server
+After=network.target
+
+[Service]
+Type=simple
+Environment="OLLAMA_NUM_GPU=999"
+Environment="ZES_ENABLE_SYSMAN=1"
+Environment="SYCL_CACHE_PERSISTENT=1"
+Environment="OLLAMA_KEEP_ALIVE=10m"
+Environment="SYCL_PI_LEVEL_ZERO_USE_IMMEDIATE_COMMANDLISTS=1"
+ExecStart=/usr/local/bin/llama-server --model /var/lib/mixtral.gguf --host /var/run/llama.sock
+ExecStartPre=/bin/rm -f /var/run/llama.sock
+Restart=on-failure
+RestartSec=5s
+StandardOutput=journal
+StandardError=inherit

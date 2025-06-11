@@ -4,6 +4,7 @@ import (
 	"avaron/llama"
 	network "avaron/net"
 	"avaron/vertex"
+	"avaron/health"
 	wg "avaron/wireguard"
 	"bufio"
 	"bytes"
@@ -26,11 +27,6 @@ import (
 	"strings"
 	"time"
 )
-
-type Message struct {
-	Content string `json:"content"`
-	Role    string `json:"role"`
-}
 
 func Listen(ctx context.Context, ch chan net.Conn, listener net.Listener) {
 	defer close(ch)
@@ -184,18 +180,32 @@ func handle(ctx context.Context, req *http.Request, conn net.Conn) (code int, he
 	var err error
 	code = http.StatusOK
 
-	switch req.URL.Path {
-	case "/api/keys/ssh":
+	i := func() int {
+		var i, j int
+		for i, j = 0, 0; i < len(req.URL.Path); i++ {
+			if req.URL.Path[i] == '/' {
+				j++
+			}
+			if j == 3 {
+				break
+			}
+		}
+		return i
+	}()
+
+	switch req.URL.Path[:i] {
+	case "/api/keys":
 		if req.Method != "GET" {
 			return http.StatusMethodNotAllowed, nil, nil
 		}
-		r = io.NopCloser(strings.NewReader(PublicSSHKeys))
-	case "/api/keys/wireguard":
-		if req.Method != "GET" {
-			return http.StatusMethodNotAllowed, nil, nil
+
+		switch req.URL.Path[i:] {
+		case "/ssh":
+			r = io.NopCloser(strings.NewReader(PublicSSHKeys))
+		case "/wireguard":
+			buf, _ := PublicWireguardKey.MarshalText()
+			r = io.NopCloser(bytes.NewReader(buf))
 		}
-		buf, _ := PublicWireguardKey.MarshalText()
-		r = io.NopCloser(bytes.NewReader(buf))
 	case "/api/link":
 		if req.Method != "POST" {
 			return http.StatusMethodNotAllowed, nil, nil
@@ -437,19 +447,46 @@ func handle(ctx context.Context, req *http.Request, conn net.Conn) (code int, he
 		header = http.Header{
 			"Content-Type": []string{"application/json"},
 		}
-	case "/api/logs":
+	case "/api/health":
 		if req.Method != "GET" {
 			return http.StatusMethodNotAllowed, nil, nil
 		}
-		var w io.WriteCloser
-		r, w = io.Pipe()
-		select {
-		case HealthCheckerRequests <- w:
-		case <-ctx.Done():
-			w.Close()
-		}
+
 		header = http.Header{
 			"Content-Type": []string{"application/json"},
+		}
+
+		var w io.WriteCloser
+		r, w = io.Pipe()
+
+		switch req.URL.Path[i:] {
+		case "/", "":
+
+
+			enc := json.NewEncoder(w)
+			go func() {
+				defer w.Close()
+				times := <-health.List
+				if err := enc.Encode(times); err != nil {
+					log.Println("error encoding:", err)
+				}
+			}()
+		default:
+			n, err := strconv.ParseInt(req.URL.Path[i+1:], 10, 64)
+			if err != nil {
+				log.Println("failed parsing integer", err)
+				return http.StatusBadRequest, nil, nil
+			}
+
+			times := <-health.List
+
+			if _, ok := times[n]; !ok {
+				return http.StatusNotFound, nil, nil
+			}
+			health.Get<-health.Request{
+				Time: n,
+				WriteCloser: w,
+			}
 		}
 	case "/api/completions":
 		if req.Method != "POST" {

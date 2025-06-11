@@ -194,20 +194,18 @@ function markdown(input) {
 
 
 const Chat = () => {
-	const [prompt,          setPrompt] = useState("")
-	const [logs,              setLogs] = useState([])
-	const [textArea, setTextAreaInner] = useState(false)
-	const input               = useRef("")
-	const xhr                 = useRef(null)
-	const setTextArea = (v) => {
-		setTextAreaInner(v)
-	}
+	const [prompt,     setPrompt] = useState("")
+	const [entries,   setEntries] = useState({})
+	const [textArea, setTextArea] = useState(false)
+	const input                   = useRef("")
+	const xhr                     = useRef(null)
 
-	const fetchLogs = useCallback(() => {
-		fetch("/api/logs")
+	const fetchEntries = useCallback(() => {
+		fetch("/api/health")
 			.then(r => r.json())
-			.then(setLogs)
-	}, [setLogs])
+			.then((r) => (console.log(r), r))
+			.then(setEntries)
+	}, [setEntries])
 
 	const submit = useCallback((e) => {
 		e.preventDefault()
@@ -215,7 +213,7 @@ const Chat = () => {
 			return
 		}
 
-		if (xhr.current != null) {
+		if (xhr.current) {
 			xhr.current.abort()
 			xhr.current = null
 		}
@@ -253,28 +251,45 @@ const Chat = () => {
 				model: "mixtral.gguf",
 				stream: true,
 			}));
+			input.current.value = ""
 			return p
 		})
 
 	}, [setPrompt])
 
-	useEffect(fetchLogs, [])
+	const focusLog = useCallback((ts) => {
+		console.log("focus", ts)
+		if (xhr.current) {
+			xhr.current.abort()
+			xhr.current = null
+		}
+
+		xhr.current = new XMLHttpRequest();
+		xhr.current.open("GET", "/api/health/" + ts, true);
+		console.log("/api/health/" + ts)
+
+		xhr.current.onreadystatechange = function(e) {
+			setPrompt(e.target.responseText)
+		};
+
+		xhr.current.send();
+	}, [setPrompt])
+
+	useEffect(fetchEntries, [])
 
 	let i, j;
-	const entries = new Array()
+	const messages = new Array()
 
 	for (i = 0; i < prompt.length; i += j) {
 		j = prompt.slice(i).indexOf("[INST]")
 
-		console.log("J", j)
 		switch (j) {
 		case 0:
 			j = prompt.slice(i).indexOf("[/INST]")
-			console.log("pj", j)
 			if (j == -1) {
 				throw "bad prompt"
 			} else if (j > "[INST]".length) {
-				entries.push((
+				messages.push((
 					<div class="ms-auto bg-success p-3 pb-1 rounded mb-1">
 						<p class=" text-end" key={i}>
 							{prompt.slice(i+"[INST]".length, i+j)}
@@ -291,14 +306,26 @@ const Chat = () => {
 				break
 			}
 			const message = markdown(prompt.slice(i, i+j))
-			console.log("i, i+j", prompt.slice(i, i+j))
-			console.log("i+j", prompt.slice(i+j))
-			entries.push((
+			messages.push((
 				<div key={i} class="me-auto bg-primary p-2 pb-1 rounded mb-1">
 					{message ? message : "..."}
 				</div>
 			))
 		}
+	}
+
+	const logs = new Array()
+	for (entry in entries) {
+		logs.push((
+			<tr onClick={focusLog.bind(null, entry)} id={entry} >
+				<td>
+					{entry}
+				</td>
+				<td>
+					{entries[entry] ? "health" : "unhealthy" }
+				</td>
+			</tr>
+		))
 	}
 
 	return (
@@ -309,7 +336,7 @@ const Chat = () => {
 						Chat
 					</div>
 					<div class="card-body d-flex flex-column">
-						{entries}
+						{messages}
 						<div class="w-100 d-flex"  >
 							<form class="w-100 d-flex flex-row" onSubmit={submit}>
 								<div class="input-group">  
@@ -333,6 +360,17 @@ const Chat = () => {
 								</div>
 							</form>
 						</div>
+					</div>
+				</div>
+
+				<div class="card text-bg-dark flex-fill overflow-x-auto">
+					<div class="card-header">
+						Logs
+					</div>
+					<div class="card-body d-flex flex-column">
+						<table>
+							{logs}
+						</table>
 					</div>
 				</div>
 			</div>
