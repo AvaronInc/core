@@ -119,9 +119,9 @@ function paragraphs(paragraphs) {
 	const base = new Array()
 	for (let i = 0; i < paragraphs.length; i++) {
 		const lines = paragraphs[i].split("\n").map(line => line + "\n")
-		const rows = new Array(lines.length)
 
 		if (lines.every(unordered)) {
+			const rows = new Array(lines.length)
 			for (let j = 0; j < lines.length; j++) {
 				const content = lines[j].slice(lines[j].indexOf('*')+1)
 				rows[j] = (
@@ -136,6 +136,7 @@ function paragraphs(paragraphs) {
 				</ul>
 			))
 		} else if (lines.every(ordered)) {
+			const rows = new Array(lines.length)
 			for (let j = 0; j < lines.length; j++) {
 				const content = lines[j].slice(lines[j].indexOf(')')+1)
 				rows[j] = (
@@ -150,9 +151,18 @@ function paragraphs(paragraphs) {
 				</ol>
 			))
 		} else {
+			const rows = new Array()
 			for (let j = 0; j < lines.length; j++) {
-				rows[j] = parse(lines[j], null).output
+				if (lines[j].startsWith("HEALTHY") || space(lines[j])) {
+					continue
+				}
+				rows.push(parse(lines[j], null).output)
 			}
+
+			if (rows.length === 0) {
+				continue
+			}
+
 			base.push((
 				<p class="">
 					{rows}
@@ -315,6 +325,9 @@ const Chat = () => {
 		case -1:
 			j = prompt.length
 		default:
+			if (i == 0) {
+				continue
+			}
 			if (space(prompt.slice(i, i+j))) {
 				break
 			}

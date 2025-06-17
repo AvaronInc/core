@@ -140,7 +140,7 @@ func Tick(ctx context.Context, writer io.Writer) (err error) {
 		return
 	}
 
-	prompt := fmt.Sprintf("[INST]%s\nthe following is the output of `ip -br addr show`: \n```\n%s\n```\n[/INST]\n", HEALTH_PROMPT, string(buf))
+	prompt := fmt.Sprintf("%s\n[INST]`$ ip -br addr show`: \n```\n%s\n```\n[/INST]\n", HEALTH_PROMPT, string(buf))
 	_, err = fmt.Fprintf(writer, "%s", prompt)
 	if err != nil {
 		return
