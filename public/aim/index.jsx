@@ -26,7 +26,7 @@ function parseTick(input) {
 	return { i, output }
 }
 
-function parse(input, end) {
+function parse(shell, input, end) {
 	const output = []
 	let i, j = 0
 	for (i = 0; i < input.length; i++) {
@@ -66,7 +66,7 @@ function parse(input, end) {
 		let result
 		switch (token) {
 		case "*": case "_":
-			result = parse(input.slice(i), token)
+			result = parse(shell, input.slice(i), token)
 			i += result.i+token.length
 			j = i
 			output.push((
@@ -76,7 +76,7 @@ function parse(input, end) {
 			))
 			break
 		case "**": case "__":
-			result = parse(input.slice(i), token)
+			result = parse(shell, input.slice(i), token)
 			i += result.i+token.length
 			j = i
 			output.push((
@@ -89,8 +89,10 @@ function parse(input, end) {
 			result = parseTick(input.slice(i), token)
 			i += result.i+token.length
 			j = i
+			const command = result.output.map(s => s.replace(/^\s*\$/, ""))
+			const isCode = command.some(s => /\s/.test(s))
 			output.push((
-				<tt>
+				<tt class={isCode ? "bg-warning" : ""} onClick={isCode ? shell.bind(null, command) : null}>
 					{result.output}
 				</tt>
 			))
@@ -107,7 +109,7 @@ function ordered(line) {
 }
 
 function unordered(line) {
-	return (/^[ \t]*\*[ \t]+/).test(line)
+	return (/^[ \t]*[\*-][ \t]+/).test(line)
 }
 
 function space(line) {
@@ -115,7 +117,7 @@ function space(line) {
 }
 
 
-function paragraphs(paragraphs) {
+function paragraphs(shell, paragraphs) {
 	const base = new Array()
 	for (let i = 0; i < paragraphs.length; i++) {
 		const lines = paragraphs[i].split("\n").map(line => line + "\n")
@@ -126,7 +128,7 @@ function paragraphs(paragraphs) {
 				const content = lines[j].slice(lines[j].indexOf('*')+1)
 				rows[j] = (
 					<li>
-						{parse(content, null).output}
+						{parse(shell, content, null).output}
 					</li>
 				)
 			}
@@ -141,7 +143,7 @@ function paragraphs(paragraphs) {
 				const content = lines[j].slice(lines[j].indexOf(')')+1)
 				rows[j] = (
 					<li>
-						{parse(content, null).output}
+						{parse(shell, content, null).output}
 					</li>
 				)
 			}
@@ -156,7 +158,7 @@ function paragraphs(paragraphs) {
 				if (lines[j].startsWith("HEALTHY") || space(lines[j])) {
 					continue
 				}
-				rows.push(parse(lines[j], null).output)
+				rows.push(parse(shell, lines[j], null).output)
 			}
 
 			if (rows.length === 0) {
@@ -174,11 +176,11 @@ function paragraphs(paragraphs) {
 	return base
 }
 
-function markdown(input) {
+function markdown(shell, input) {
 	const output = new Array()
 	const re = /```/g
 
-	let match, n, i, j = 0
+	let match, n, i, j = 0, k
 	for (n = 0, i = 0; i < input.length; n++) {
 		if ((match = (re.exec(input)))) { 
 			i = match.index
@@ -186,14 +188,26 @@ function markdown(input) {
 			i = input.length
 		}
 
+		const slice = input.slice(j, i)
+
 		if (n % 2) {
+			const lines = slice.split("\n")
+			const spans = new Array(lines.length)
+			for (k = 0; k < lines.length; k++) {
+				const isCode = /\s*\$.*\s/.test(lines[k])
+				spans[k] = (
+					<span class={isCode ? "bg-warning" : ""} onClick={isCode ? shell.bind(null, lines[k]) : null}>
+						{ lines[k] + "\n" }
+					</span>
+				)
+			}
 			output.push((
-				<pre><code>
-					{input.slice(j, i)}
+				<pre><code >
+					{spans}
 				</code></pre>
 			))
 		} else {
-			const p = paragraphs(input.slice(j, i).split("\n\n"))
+			const p = paragraphs(shell, slice.split("\n\n"))
 			output.push(p)
 		}
 		j = i + "```".length
@@ -211,11 +225,17 @@ function style(s) {
 }
 
 const Chat = () => {
-	const [prompt,     setPrompt] = useState("")
+	const [prompt,     setPromptInner] = useState("")
 	const [entries,   setEntries] = useState({})
 	const [textArea, setTextArea] = useState(false)
 	const input                   = useRef("")
 	const xhr                     = useRef(null)
+
+	const setPrompt = (p) => {
+		console.trace("set prompt", p)
+		setPromptInner(p)
+	}
+
 
 	const fetchEntries = useCallback(() => {
 		fetch("/api/health")
@@ -224,30 +244,20 @@ const Chat = () => {
 			.then(setEntries)
 	}, [setEntries])
 
-	const submit = useCallback((e) => {
-		e.preventDefault()
-		if (!input.current || !input.current.value) {
-			return
-		}
-
-		if (xhr.current) {
-			xhr.current.abort()
-			xhr.current = null
-		}
-
-		xhr.current = new XMLHttpRequest();
-		xhr.current.open("POST", "/api/completions", true);
+	const post = useCallback((content) => {
+		const request = new XMLHttpRequest();
+		request.open("POST", "/api/completions", true);
 
 		let i = 0, j = 0
-		xhr.current.onreadystatechange = function(e) {
-			switch (xhr.current.readyState) {
+		request.onreadystatechange = function(e) {
+			switch (request.readyState) {
 			case 3: break;
 			default:
 				return
 			}
 
-			for (; i < xhr.current.responseText.length; i += j+1) {
-				const rest = xhr.current.responseText.slice(i)
+			for (; i < request.responseText.length; i += j+1) {
+				const rest = request.responseText.slice(i)
 
 				j = rest.indexOf('\n')
 				if (j == -1) {
@@ -261,18 +271,47 @@ const Chat = () => {
 			}
 		};
 
-		setPrompt(p => {
-			p = p+"[INST]"+input.current.value+"[/INST]"
-			xhr.current.send(JSON.stringify({
-				prompt: p,
-				model: "mixtral.gguf",
-				stream: true,
-			}));
-			input.current.value = ""
-			return p
-		})
+		const p = prompt+"[INST]"+content+"[/INST]"
+		const promise = new Promise((res) => setPrompt(p, res))
 
+		request.send(JSON.stringify({
+			prompt: p,
+			model: "mixtral.gguf",
+			stream: true,
+		}));
+
+		return promise
+
+	}, [prompt, setPrompt])
+
+	const submit = useCallback((e) => {
+		e.preventDefault()
+		if (!input.current || !input.current.value) {
+			return
+		}
+
+		post(input.current.value).then(() => (input.current.value = ""))
 	}, [setPrompt])
+
+	const shell = useCallback((command) => {
+		const request = new XMLHttpRequest();
+		request.open("POST", "/api/shell/", true);
+
+		request.onreadystatechange = function(e) {
+			switch (e.target.readyState) {
+			case 4:
+				if (e.target.responseText.length) {
+					break
+				}
+			default:
+					return
+			}
+			post("\n```\n" + e.target.responseText + "\n```\n")
+		};
+
+		request.send(command);
+	}, [setPrompt])
+
 
 	const focusLog = useCallback((ts) => {
 		if (xhr.current) {
@@ -311,7 +350,7 @@ const Chat = () => {
 			if (j == -1) {
 				throw "bad prompt"
 			} else if (j > "[INST]".length) {
-				const message = markdown(prompt.slice(i+"[INST]".length, i+j))
+				const message = markdown(shell, prompt.slice(i+"[INST]".length, i+j))
 				messages.push((
 					<div class="ms-auto bg-secondary p-3 pb-1 rounded mb-1">
 						<p key={i}>
@@ -331,7 +370,7 @@ const Chat = () => {
 			if (space(prompt.slice(i, i+j))) {
 				break
 			}
-			const message = markdown(prompt.slice(i, i+j))
+			const message = markdown(shell, prompt.slice(i, i+j))
 			messages.push((
 				<div key={i} class="me-auto bg-primary p-2 pb-1 rounded mb-1">
 					{message ? message : "..."}

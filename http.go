@@ -454,6 +454,30 @@ func handle(ctx context.Context, req *http.Request, conn net.Conn) (code int, he
 		header = http.Header{
 			"Content-Type": []string{"application/json"},
 		}
+	case "/api/shell":
+		buf, err := io.ReadAll(req.Body)
+		if err != nil {
+			log.Println("failed reading body:", err)
+			return http.StatusInternalServerError, nil, nil
+		}
+		log.Println("SHELL", string(buf))
+
+		sh := exec.Command("sh", "-c", string(buf))
+
+		var w io.WriteCloser
+		r, w = io.Pipe()
+		r = io.NopCloser(io.TeeReader(r, os.Stderr))
+		sh.Stdout = w
+		sh.Stderr = w
+
+		if err := sh.Start(); err != nil {
+			log.Println("failed starting shell", string(buf), err)
+			return http.StatusInternalServerError, nil, nil
+		}
+		go func() {
+			log.Println("command completed:", sh.Wait())
+			w.Close()
+		}()
 	case "/api/health":
 		if req.Method != "GET" {
 			return http.StatusMethodNotAllowed, nil, nil
