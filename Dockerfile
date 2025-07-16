@@ -19,7 +19,7 @@ COPY --chown=llama:llama libmtmd.so /usr/local/lib/libmtmd.so
 COPY --chown=llama:llama mixtral.gguf /var/lib/mixtral.gguf
 
 # Set LD_LIBRARY_PATH so llama-server can find libmtmd.so
-ENV LD_LIBRARY_PATH=/usr/local/lib
+ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/lib/x86_64-linux-gnu
 
 # Switch to non-root user
 USER llama
