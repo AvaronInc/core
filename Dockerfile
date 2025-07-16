@@ -1,38 +1,51 @@
-# syntax=docker/dockerfile:1
-FROM debian:stable-slim AS base
+FROM --platform=$BUILDPLATFORM python:3.11-slim as builder
 
-# Install minimal dependencies (if any are needed)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
+ARG TARGETPLATFORM
+ARG BUILDPLATFORM
+
+WORKDIR /app
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Create a non-root user (optional, for security)
-RUN useradd -m llama
+# Copy requirements first for better caching
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Create required directories
-RUN mkdir -p /usr/local/bin /var/lib /var/run && chown llama:llama /var/run
+# Runtime stage
+FROM python:3.11-slim
 
-# Copy the prebuilt llama-server binary (mock for now)
-COPY --chown=llama:llama llama-server /usr/local/bin/llama-server
+WORKDIR /app
 
-# Copy the model file (mock for now)
-COPY --chown=llama:llama mixtral.gguf /var/lib/mixtral.gguf
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
 
-# Set environment variables from llama-server.service
-ENV OLLAMA_NUM_GPU=999 \
-    ZES_ENABLE_SYSMAN=1 \
-    SYCL_CACHE_PERSISTENT=1 \
-    OLLAMA_KEEP_ALIVE=10m \
-    SYCL_PI_LEVEL_ZERO_USE_IMMEDIATE_COMMANDLISTS=1
+# Install Ollama
+RUN curl -fsSL https://ollama.com/install.sh | sh
 
-# Expose the Unix socket path as a VOLUME (for host access, if needed)
-VOLUME ["/var/run"]
+# Copy Python packages from builder
+COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 
-# Ensure the socket file does not exist before starting
-RUN rm -f /var/run/llama.sock || true
+# Copy application code
+COPY . .
 
-# Switch to non-root user
-USER llama
+# Create directories for model storage
+RUN mkdir -p /root/.ollama/models
 
-# Entrypoint: run the server with the correct arguments
-ENTRYPOINT ["/usr/local/bin/llama-server", "--model", "/var/lib/mixtral.gguf", "--host", "/var/run/llama.sock"]
+# Expose ports
+EXPOSE 8000 11434
+
+# Create entrypoint script
+RUN echo '#!/bin/bash\n\
+ollama serve &\n\
+sleep 5\n\
+ollama pull mistral:7b\n\
+python main.py' > /entrypoint.sh && chmod +x /entrypoint.sh
+
+# Start both Ollama and FastAPI
+CMD ["/entrypoint.sh"]

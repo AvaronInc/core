@@ -1,0 +1,83 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: avaron
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: avaron-ai-agent
+  namespace: avaron
+spec:
+  selector:
+    matchLabels:
+      app: ai-agent
+  template:
+    metadata:
+      labels:
+        app: ai-agent
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+      - name: ai-agent
+        image: registry.avaron.local/avaron/ai-agent:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8000
+          name: api
+        - containerPort: 11434
+          name: ollama
+        resources:
+          requests:
+            memory: "4Gi"
+            cpu: "2"
+          limits:
+            memory: "8Gi"
+            cpu: "4"
+        env:
+        - name: OLLAMA_HOST
+          value: "0.0.0.0:11434"
+        - name: DEVICE_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        volumeMounts:
+        - name: model-cache
+          mountPath: /root/.ollama
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 60
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+      volumes:
+      - name: model-cache
+        hostPath:
+          path: /var/lib/avaron/models
+          type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: avaron-agent-service
+  namespace: avaron
+spec:
+  selector:
+    app: ai-agent
+  ports:
+  - name: api
+    port: 8000
+    targetPort: 8000
+  - name: metrics
+    port: 9100
+    targetPort: 8000
+  type: ClusterIP 

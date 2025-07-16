@@ -1,0 +1,65 @@
+{
+  "dashboard": {
+    "id": null,
+    "uid": "avaron-agent",
+    "title": "Avaron AI Agent Monitor",
+    "timezone": "browser",
+    "schemaVersion": 16,
+    "version": 0,
+    "refresh": "5s",
+    "panels": [
+      {
+        "id": 1,
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+        "type": "graph",
+        "title": "Request Rate",
+        "targets": [
+          {
+            "expr": "rate(agent_requests_total[5m])",
+            "legendFormat": "Requests/sec"
+          }
+        ],
+        "yaxes": [{"format": "reqps"}, {"format": "short"}]
+      },
+      {
+        "id": 2,
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+        "type": "graph",
+        "title": "Response Time (95th percentile)",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(agent_request_duration_seconds_bucket[5m]))",
+            "legendFormat": "95th percentile"
+          }
+        ],
+        "yaxes": [{"format": "s"}, {"format": "short"}]
+      },
+      {
+        "id": 3,
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+        "type": "graph",
+        "title": "Error Rate",
+        "targets": [
+          {
+            "expr": "rate(agent_errors_total[5m])",
+            "legendFormat": "Errors/sec"
+          }
+        ],
+        "yaxes": [{"format": "reqps"}, {"format": "short"}]
+      },
+      {
+        "id": 4,
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+        "type": "table",
+        "title": "Active Agents",
+        "targets": [
+          {
+            "expr": "up{job=\"avaron-agents\"}",
+            "format": "table",
+            "instant": true
+          }
+        ]
+      }
+    ]
+  }
+} 
