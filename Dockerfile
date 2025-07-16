@@ -3,9 +3,10 @@ FROM ubuntu:24.04
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
     libcurl4 \
-    libstdc++6 \
     ca-certificates \
+    libstdc++6 \
     && rm -rf /var/lib/apt/lists/*
 
 # Create llama user
