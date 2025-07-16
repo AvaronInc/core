@@ -7,3 +7,6 @@
 [submodule "contrib/llama.cpp"]
 	path = contrib/llama.cpp
 	url = https://github.com/ggml-org/llama.cpp
+[submodule "ui"]
+	path = ui
+	url = https://github.com/AvaronInc/ui.git
