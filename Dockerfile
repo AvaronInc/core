@@ -4,7 +4,6 @@ FROM ubuntu:24.04
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libcurl4 \
-    libcurl4-openssl-dev \
     ca-certificates \
     libstdc++6 \
     && rm -rf /var/lib/apt/lists/*
